@@ -1,0 +1,25 @@
+# The demo-only copy: safe to port-forward. It serves the demo and nothing
+# else -- recordings, uploads, the audio stream and the live connection are
+# all refused, and it never contacts guitarix. Install it alongside
+# gxweb.service, the same way:
+#
+#   cp gxweb-demo.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gxweb-demo
+#
+# Then forward port 5080 (not 5000) for friends.
+
+[Unit]
+Description=Guitarix web control surface (demo only)
+After=default.target
+
+[Service]
+WorkingDirectory=%h/gxamp
+ExecStart=/usr/bin/python3 %h/gxamp/app.py
+Environment=GX_DEMO_ONLY=1
+Environment=GX_WEB_PORT=5080
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

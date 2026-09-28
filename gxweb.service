@@ -1,0 +1,26 @@
+# A systemd USER service: it runs as you, like JACK and guitarix do. A system
+# service often can't see a user's JACK server at all.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp gxweb.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gxweb
+#   sudo loginctl enable-linger $USER      # start at boot, without logging in
+#
+#   journalctl --user -u gxweb -f          # its log
+#
+# Start order doesn't matter: the app reconnects to guitarix on its own.
+
+[Unit]
+Description=Guitarix web control surface
+After=default.target
+
+[Service]
+WorkingDirectory=%h/gxamp
+ExecStart=/usr/bin/python3 %h/gxamp/app.py
+Environment=GX_PORT=7000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
