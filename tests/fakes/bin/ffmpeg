@@ -116,6 +116,57 @@ def monitor_mp3(client):
         fakejack.remove_client(client)
 
 
+def transcode(args):
+    """
+    ffmpeg -hide_banner -loglevel error -y -i INPUT.wav -c:a libmp3lame \
+           -b:a 192k OUTPUT.mp3
+
+    The real thing re-encodes; this writes a file of a plausible size for the
+    input's duration at the asked-for bitrate. The test checks that the output
+    exists and is named right, never what is inside it -- and a fake that
+    produced a real MP3 would only be testing lame.
+    """
+    src = dst = None
+    bitrate = 192000
+    skip = ("-i", "-b:a", "-c:a", "-f", "-loglevel", "-ac")
+    for i, a in enumerate(args):
+        if a == "-i" and i + 1 < len(args):
+            src = args[i + 1]
+        elif a == "-b:a" and i + 1 < len(args):
+            raw = args[i + 1].lower().rstrip("k")
+            try:
+                bitrate = int(float(raw) * 1000)
+            except ValueError:
+                pass
+        elif not a.startswith("-") and i and args[i - 1] not in skip:
+            dst = a
+
+    if not src or not os.path.exists(src):
+        print("Error: no such input file: %s" % src, file=sys.stderr)
+        sys.exit(1)
+    if not dst:
+        print("Error: no output file given", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with wave.open(src, "rb") as w:
+            seconds = w.getnframes() / float(w.getframerate() or 1)
+    except Exception as exc:
+        print("Error: cannot read %s: %s" % (src, exc), file=sys.stderr)
+        sys.exit(1)
+
+    size = max(4, int(seconds * bitrate / 8))
+    header = bytes([255, 251])          # enough of a frame header to look like one
+    try:
+        with open(dst, "wb") as fh:
+            fh.write(header)
+            fh.write(bytes(size - len(header)))
+    except OSError as exc:
+        print("Error: cannot write %s: %s" % (dst, exc), file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
+
+
 def main():
     args = sys.argv[1:]
     
@@ -178,8 +229,10 @@ def main():
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
     else:
-        print("Error: Unknown invocation.", file=sys.stderr)
-        sys.exit(1)
+        # No -f jack anywhere: a plain file-to-file transcode, which is how
+        # recorder.py renders an export to MP3. No JACK is involved and the
+        # fake graph is not touched.
+        transcode(args)
 
 
 if __name__ == "__main__":
