@@ -28,7 +28,7 @@ class FakeEngine:
         
         # Seed presets
         self.presets = {
-            'Warm/Clean Warm': {'amp.fuzz': 0.02},
+            'Warm/Clean Warm': {'amp.fuzz': 0.02, 'cab.on_off': 1},
             'Warm/Crunch': {'amp.fuzz': 0.5},
         }
         

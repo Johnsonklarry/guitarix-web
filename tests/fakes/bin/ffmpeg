@@ -8,10 +8,10 @@ import time
 import threading
 import subprocess
 
-current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, current_dir)
+# fakejack lives in the parent directory, tests/fakes/
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tests.fakes import fakejack
+import fakejack
 
 # Global variables to manage the process state
 recording_thread = None

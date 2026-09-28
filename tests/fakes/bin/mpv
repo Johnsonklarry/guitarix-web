@@ -66,7 +66,12 @@ def handle_command(cmd):
         return {'error': 'success', 'data': None, 'request_id': request_id}
     
     elif cmd_name == 'quit':
-        # Exit the process
+        # Drop our ports before going. os._exit skips both the finally below
+        # and the signal handlers, and player.py sends quit before it kills --
+        # so without this the ports outlive the player and the guitar never
+        # gets reconnected.
+        if client_name:
+            fakejack.remove_client(client_name)
         os._exit(0)
     
     return {'error': 'success', 'data': None, 'request_id': request_id}
