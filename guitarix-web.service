@@ -1,0 +1,27 @@
+# The web control surface, as a systemd SYSTEM service.
+#
+#   sudo cp guitarix-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now guitarix-web
+#
+#   journalctl -u guitarix-web -f          # its log
+#
+# Start order doesn't matter: the app reconnects to guitarix on its own.
+
+[Unit]
+Description=Guitarix web control surface
+After=network.target guitarix.service
+Wants=guitarix.service
+
+[Service]
+Type=simple
+User=ljohnson
+WorkingDirectory=/home/ljohnson/guitarix-web
+ExecStart=/home/ljohnson/guitarix-web/.venv/bin/python /home/ljohnson/guitarix-web/app.py
+Environment=GX_PORT=7000
+Environment=GX_WEB_PORT=5000
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
