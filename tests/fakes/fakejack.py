@@ -2,9 +2,23 @@ import json
 import os
 import tempfile
 
+def _dir():
+    """
+    Where the graph lives. Without FAKE_JACK_DIR these tools are being run
+    outside the harness -- most often because tests/fakes/bin was left on
+    PATH -- and saying so beats a KeyError traceback that jackutil quietly
+    turns into a fallback port list.
+    """
+    try:
+        return os.environ['FAKE_JACK_DIR']
+    except KeyError:
+        raise SystemExit("FAKE_JACK_DIR is not set: these are the test fakes, "
+                         "not real JACK tools. Is tests/fakes/bin still on PATH?")
+
+
 def load():
     """Load the graph state from FAKE_JACK_DIR/graph.json, seeding if needed."""
-    dir = os.environ['FAKE_JACK_DIR']
+    dir = _dir()
     path = os.path.join(dir, 'graph.json')
     
     # If file exists, load it as-is
@@ -35,7 +49,7 @@ def load():
 
 def save(state):
     """Save the graph state atomically to FAKE_JACK_DIR/graph.json."""
-    dir = os.environ['FAKE_JACK_DIR']
+    dir = _dir()
     path = os.path.join(dir, 'graph.json')
     
     # Write to temp file and replace
@@ -79,15 +93,21 @@ def remove_client(client):
 def connect(src, dst):
     """Connect two ports. Return True on success."""
     state = load()
-    
+
     # Check if ports exist
     if src not in state['ports'] or dst not in state['ports']:
         return False
-    
+
+    # One end has to be an output and the other an input. Real jack_connect
+    # refuses two inputs or two outputs, and a fake that shrugs at a wiring
+    # bug is worse than no test at all.
+    if sorted((state['ports'][src], state['ports'][dst])) != ['input', 'output']:
+        return False
+
     # Check if already connected
     if [src, dst] in state['connections']:
         return False
-    
+
     # Add connection
     state['connections'].append([src, dst])
     save(state)
