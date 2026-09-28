@@ -1,0 +1,33 @@
+# The broadcast-only copy: safe to port-forward. It serves a read-only
+# public view of the rig, with no control or routing capability.
+#
+# It runs the same app.py as the demo and web interfaces, but with
+# GX_BROADCAST=1 set in the environment. It listens on port 5090 for
+# visitors at amp.larebear.org to listen in on what is playing right now.
+#
+# It can change nothing on the rig -- all control events and routes are
+# refused, and it never contacts guitarix except to read its state.
+#
+#   sudo cp guitarix-broadcast.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now guitarix-broadcast
+#
+# Then forward port 5090 for strangers.
+
+[Unit]
+Description=Guitarix web control surface (broadcast only)
+After=network.target guitarix.service
+Wants=guitarix.service
+
+[Service]
+Type=simple
+User=ljohnson
+WorkingDirectory=/home/ljohnson/guitarix-web
+ExecStart=/home/ljohnson/guitarix-web/.venv/bin/python /home/ljohnson/guitarix-web/app.py
+Environment=GX_BROADCAST=1
+Environment=GX_WEB_PORT=5090
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
