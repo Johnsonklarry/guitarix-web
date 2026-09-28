@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+import wave
+
+def main():
+    if len(sys.argv) < 4 or sys.argv[1] != '-v' or sys.argv[2] != 'quiet' or sys.argv[3] != '-print_format' or sys.argv[4] != 'json':
+        print('Unexpected arguments', file=sys.stderr)
+        sys.exit(1)
+    
+    # Find the file path (it's the last argument)
+    file_path = sys.argv[-1]
+    
+    if not os.path.exists(file_path):
+        sys.exit(1)
+    
+    duration = None
+    
+    # Try to compute duration from WAV file
+    if file_path.endswith('.wav'):
+        try:
+            with wave.open(file_path, 'r') as wav_file:
+                frames = wav_file.getnframes()
+                rate = wav_file.getframerate()
+                duration = frames / rate
+        except Exception:
+            pass
+    
+    # Fallback to a constant for non-WAV files
+    if duration is None:
+        duration = 10.0  # 10 seconds fallback
+    
+    # Output the JSON format that ffprobe would return
+    result = {
+        "format": {
+            "duration": str(duration)
+        }
+    }
+    
+    print(json.dumps(result))
+
+if __name__ == "__main__":
+    main()
