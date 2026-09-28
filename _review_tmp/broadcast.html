@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#151210">
+<meta name="color-scheme" content="dark">
+
+<!-- Add to Home Screen launches this as an app, without the browser's bars -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="{{ asset('icons/icon-192.png') }}">
+<link rel="apple-touch-icon" href="{{ asset('icons/apple-touch-icon.png') }}">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Guitarix">
+<!-- the status bar floats over the page; the safe-area padding keeps it clear -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Guitarix</title>
+<link rel="stylesheet" href="{{ asset('broadcast.css') }}">
+</head>
+
+<body>
+<main class="cab">
+  <div class="cab__inner">
+
+    <header class="panel">
+      <h1 class="wordmark">Guitarix</h1>
+      <div class="panel__side">
+        <p class="readout">
+          <span class="pilot" id="pilot" aria-hidden="true"></span>
+          <span id="readout">Connecting to the amp</span>
+        </p>
+        <span class="panel__rule" aria-hidden="true"></span>
+        <div class="listen">
+          <span class="listen__lamp" id="listen-lamp" aria-hidden="true"></span>
+          <span id="listen-label">Listen</span>
+        </div>
+      </div>
+    </header>
+
+    <p class="alert" id="offline" hidden role="status">
+      <span class="alert__lamp" aria-hidden="true"></span>
+      <span id="offline-text">Not connected to the guitarix engine.</span>
+    </p>
+
+    <div class="audition" id="audition" hidden role="status">
+      <span class="audition__lamp" aria-hidden="true"></span>
+      <p class="audition__text" id="audition-text"></p>
+      <div class="audition__actions" id="audition-actions">
+        <button class="act is-primary" id="aud-save" type="button">Save</button>
+        <button class="act" id="aud-discard" type="button">Discard</button>
+        <button class="act is-quiet" id="aud-back" type="button">Back to import</button>
+      </div>
+    </div>
+
+    <div class="broadcast">
+      <div class="preset-display">
+        <h2 class="preset-name" id="preset-name"></h2>
+        <p class="bank-name" id="bank-name"></p>
+      </div>
+
+      <div class="connection-lamp" id="connection-lamp">
+        <span class="lamp" aria-hidden="true"></span>
+        <span>Connected</span>
+      </div>
+
+      <div class="recording-indicator" id="recording-indicator" hidden>
+        <span class="recording-lamp" aria-hidden="true"></span>
+        <span>Recording</span>
+      </div>
+
+      <p class="take-count" id="take-count"></p>
+
+      <audio id="monitor-audio" controls>
+        <source src="/monitor.mp3" type="audio/mpeg">
+        Your browser does not support the audio element.
+      </audio>
+    </div>
+
+  </div>
+</main>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="{{ asset('broadcast.js') }}"></script>
+</body>
+</html>

@@ -56,6 +56,12 @@ WEB_PORT = int(os.environ.get("GX_WEB_PORT", "5000"))
 # second copy like this on its own port, and forward THAT one to show people
 # -- see "Demo mode" in the README.
 DEMO_ONLY = os.environ.get("GX_DEMO_ONLY", "").lower() in ("1", "true", "yes")
+
+# GX_BROADCAST=1 is the read-only shop window: it shows what is playing right
+# now -- the preset, whether a take is rolling -- and lets a visitor listen.
+# It talks to guitarix, unlike the demo, so it must give away nothing that
+# could change the rig. Nothing is registered that could.
+BROADCAST = os.environ.get("GX_BROADCAST", "").lower() in ("1", "true", "yes")
 FLUSH_INTERVAL = 0.05     # seconds; coalesces slider storms into ~20 fps
 
 # Python doesn't know the manifest's extension, and would serve it as a
@@ -83,6 +89,51 @@ def asset(filename):
         stamp = 0
     return url_for("static", filename=filename, v=stamp)
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
+
+# Broadcast mode refuses control events by never registering their handlers.
+# Wrapping the decorator rather than guarding inside each one means a handler
+# added later is refused too, without anyone having to remember.
+BROADCAST_EVENTS = frozenset(("connect", "disconnect"))
+_socketio_on = socketio.on
+
+
+def _broadcast_guarded_on(event, *a, **kw):
+    register = _socketio_on(event, *a, **kw)
+    if not BROADCAST or event in BROADCAST_EVENTS:
+        return register
+
+    def refuse(fn):
+        def blocked(*_a, **_kw):
+            log.warning("broadcast: refused %s", event)
+            return False
+        blocked.__name__ = getattr(fn, "__name__", "blocked")
+        register(blocked)
+        return fn
+    return refuse
+
+
+socketio.on = _broadcast_guarded_on
+
+# The push side needs the same treatment. flusher(), on_ready() and the preset
+# hooks all emit the full state, and a broadcast viewer is on the same wire as
+# everyone else -- so filter at the emit, once, rather than at each call site.
+BROADCAST_EMITS = frozenset(("snapshot", "preset", "status", "rec"))
+_socketio_emit = socketio.emit
+
+
+def _broadcast_guarded_emit(event, data=None, *a, **kw):
+    if BROADCAST:
+        if event not in BROADCAST_EMITS:
+            return
+        if event == "snapshot":
+            data = broadcast_snapshot()
+        elif event == "rec":
+            data = {"recording": bool((data or {}).get("recording")),
+                    "count": (data or {}).get("count")}
+    return _socketio_emit(event, data, *a, **kw)
+
+
+socketio.emit = _broadcast_guarded_emit
 
 
 class AmpState:
@@ -330,10 +381,20 @@ rpc = GuitarixRPC(GX_HOST, GX_PORT,
 
 # ------------------------------------------------------------------ http
 
+# What a broadcast server will answer: the page, its assets, and the stream.
+# Listening is the point of it -- everything else is refused, including the
+# parameter list, the recordings and the uploads.
+BROADCAST_ENDPOINTS = ("index", "static", "manifest", "monitor_stream")
+
+
 @app.before_request
 def demo_only_guard():
     """A demo-only server hands out the page and its files, and nothing else."""
     if DEMO_ONLY and request.endpoint not in ("index", "static", "manifest"):
+        abort(403)
+    if BROADCAST and request.endpoint not in BROADCAST_ENDPOINTS:
+        abort(403)
+    if BROADCAST and request.method != "GET":
         abort(403)
 
 
@@ -432,10 +493,31 @@ def api_parameters():
 
 # ------------------------------------------------------------------ socket.io
 
+def broadcast_snapshot():
+    """
+    What a stranger may see: what is playing, and whether a take is rolling.
+    Built by naming fields rather than by deleting them from the full
+    snapshot, so a field added there is not published here by accident.
+    """
+    full = state.snapshot()
+    rec = full.get("rec") or {}
+    return {
+        "broadcast": True,
+        "connected": full.get("connected"),
+        "bank": full.get("bank"),
+        "preset": full.get("preset"),
+        "recording": bool(rec.get("recording")),
+        "takes": rec.get("count"),
+    }
+
+
 @socketio.on("connect")
 def client_connected():
     if DEMO_ONLY:
         return False            # refuse: the demo never needs the live connection
+    if BROADCAST:
+        socketio.emit("snapshot", broadcast_snapshot())
+        return
     socketio.emit("snapshot", state.snapshot())
 
 
