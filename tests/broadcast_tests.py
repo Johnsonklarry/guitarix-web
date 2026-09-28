@@ -185,4 +185,5 @@ def _():
 failed = [n for n, e in results if e]
 print("\n%s  (%d scenarios)" % ("FAILED: " + ", ".join(failed) if failed else "all good",
                                 len(results)))
+sys.stdout.flush()                 # os._exit skips it, and over a pipe that loses everything
 os._exit(1 if failed else 0)
