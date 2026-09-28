@@ -54,7 +54,9 @@ The page
 Tools for your build
   dump_params.py          prints your engine's parameters (--json for Claude, --raw to debug)
   probe_rpc.py            finds which preset methods your guitarix version answers to
+  diagnose.py             the self-test behind `app.py --check`
   build_preview.py        rebuilds preview.html from the real page
+  spike_latency.py        Phase 0: measures low-latency browser audio
 
 Checks
   tests/lint.py           undefined names and stale references between files
@@ -82,6 +84,34 @@ steps in its header. Anything below that isn't working is most likely a port
 name: see **Ports to check on the Pi**.
 
 ## Checking it works
+
+First, on the Pi itself:
+
+```bash
+python3 app.py --check
+```
+
+That checks everything this app leans on and tells you what to do about
+anything missing: the Python packages, ffmpeg (including mp3 and its JACK
+input), mpv (including its JACK output), the JACK tools, whether JACK is
+running, **whether the port names in the config match your actual rig**,
+whether guitarix answers and how many parameters and banks it has, disk
+space, and whether the Socket.IO client is vendored.
+
+It's read-only and safe while you're playing: it reads JACK's port list and
+asks guitarix what it has, but connects nothing and writes nothing. Add
+`--quick` to skip the part that talks to guitarix.
+
+The port names are the important bit. Most of them in `recorder.py` and
+`reamp.py` are inferences about typical JACK naming. When one is wrong you
+get the setting, the file it lives in, and the real options:
+
+```
+[ FAIL ] jack: amp output    no output ports on "guitarix"
+             -> set SOURCE_CLIENT in recorder.py to one of: system, gx_head_amp
+```
+
+Then the automated suites:
 
 ```bash
 python3 tests/lint.py               # undefined names, stale references between files
@@ -284,7 +314,45 @@ looper is: the loop is as long as the file, and a take starts a moment after
 you press Record while ffmpeg connects. For tight looping, a dedicated JACK
 looper like SooperLooper is the right tool, and could be driven from here.
 
-### Listening through the page
+### Measuring low-latency audio (the Phase 0 spike)
+
+`spike_latency.py` is a throwaway experiment, separate from the app, that
+answers one question: **how far behind can browser audio be over plain http?**
+Run it alongside everything else; it touches nothing the app owns.
+
+```bash
+python3 spike_latency.py --fake      # a generated tone: no JACK involved
+python3 spike_latency.py             # tap the amp
+python3 spike_latency.py --source system:capture_1
+```
+
+Then open `http://<pi>:5055` from the device you'd actually listen on, press
+Start, and read the numbers. Do `--fake` first: it proves the browser half
+works before JACK is in the picture, which halves the search space when
+something is wrong.
+
+**One thing it settled already.** On plain http from a LAN address the page
+is *not* a secure context, and `AudioWorklet` does not exist there -- it's
+available only on localhost. So playback uses `ScriptProcessorNode`:
+deprecated, main-thread, but present everywhere. That's a constraint on the
+real feature, not a choice, unless the app moves to HTTPS.
+
+What the page reports:
+
+| | |
+|---|---|
+| network, one way | measured against the server's clock, lined up by round trip |
+| jitter buffer | how much audio is waiting; adjustable, and it tracks what you set |
+| browser output | what the browser says its own output costs |
+| clock drift | your device's audio clock against the Pi's, in ppm |
+| dropouts | times the buffer ran dry |
+
+**Total is those three added up.** It excludes what JACK and ffmpeg hold on
+the Pi beforehand, so the true figure is this plus your JACK buffer -- a few
+ms at 128 frames. Try the smallest jitter buffer that gives no dropouts over
+a minute or two; that's your floor on that network.
+
+## Listening through the page
 
 **Listen** in the header plays the rig in the browser: the amp, any backing
 track, and a reamp with the amp switched off -- whatever your outputs are

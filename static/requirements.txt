@@ -1,9 +1,0 @@
-# Python side. Install with:  pip install -r requirements.txt
-flask>=2.3
-flask-socketio>=5.3
-simple-websocket>=1.0      # real websockets; without it Socket.IO falls back to slower polling
-
-# System side (apt), not pip:
-#   ffmpeg   recording, the Listen stream, MP3 exports  (needs libmp3lame: ffmpeg -encoders | grep mp3)
-#   mpv      playing into JACK: reamps, backing tracks  (needs JACK output: mpv --ao=help | grep jack)
-#   jackd2   brings jack_lsp / jack_connect / jack_disconnect
