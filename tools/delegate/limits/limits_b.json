@@ -1,0 +1,140 @@
+{
+  "google": {
+    "plan": "Gemini API free tier",
+    "limits": [],
+    "reset": {
+      "type": "fixed",
+      "window_hours": 24,
+      "reset_time_utc": null,
+      "weekday": null,
+      "day_of_month": null,
+      "timezone": null,
+      "note": "Free-tier per-model RPM, TPM, RPD values and the daily reset time could not be verified from the official documentation during this check. Consult the live rate-limit dashboard; do not assume a universal quota or reset time."
+    },
+    "per_model_or_account": "model",
+    "notes": "Rate limits are model-dependent, but exact free-tier values are unverified here.",
+    "source_urls": ["https://ai.google.dev/gemini-api/docs/rate-limits"],
+    "verified": false,
+    "checked": "2026-09-28"
+  },
+  "cerebras": {
+    "plan": "Free Trial (time- and credit-bounded; not an automatically renewing free tier)",
+    "limits": [
+      {"scope":"requests","per":"minute","amount":5,"applies_to":"gpt-oss-120b and qwen-3.8-27b, Free Trial tier"},
+      {"scope":"tokens","per":"minute","amount":30000,"applies_to":"uncached TPM, each listed Free Trial model"},
+      {"scope":"tokens","per":"minute","amount":90000,"applies_to":"total TPM (cached plus uncached), each listed Free Trial model"},
+      {"scope":"tokens","per":"hour","amount":1000000,"applies_to":"each listed Free Trial model"},
+      {"scope":"tokens","per":"day","amount":1000000,"applies_to":"each listed Free Trial model"}
+    ],
+    "reset": {
+      "type":"rolling",
+      "window_hours":1,
+      "reset_time_utc":null,
+      "weekday":null,
+      "day_of_month":null,
+      "timezone":null,
+      "note":"Token-bucket quota replenishes continuously, rather than resetting at fixed interval boundaries. $5 free-trial credits require adding a verified payment method and expire 30 days after being granted; credit expiration is not a quota reset."
+    },
+    "per_model_or_account":"account",
+    "notes":"Rate limits are enforced at organization level and vary by model. Official documentation identifies gpt-oss-120b and qwen-3.8-27b with the listed Free Trial values. Specific organization Limits display is authoritative. Free Trial: $5 credits after adding a verified payment method; access stops when credits are exhausted or expire. No permanent automatically renewing free tier.",
+    "source_urls":["https://inference-docs.cerebras.ai/support/rate-limits"],
+    "verified":true,
+    "checked":"2026-09-28"
+  },
+  "mistral": {
+    "plan":"La Plateforme / Mistral API Free mode",
+    "limits":[],
+    "reset": {
+      "type":"rolling",
+      "window_hours":null,
+      "reset_time_utc":null,
+      "weekday":null,
+      "day_of_month":null,
+      "timezone":null,
+      "note":"Official current numeric free-tier limits and reset rules were not verified. Limits may be configured per organization/workspace and shown in the console; scheduler should read current account limits rather than infer a reset schedule."
+    },
+    "per_model_or_account":"account",
+    "notes":"Official docs confirm Studio Free mode and organization/workspace usage-limit management, but the public pages fetched did not establish numeric free-tier quotas or their reset behavior.",
+    "source_urls":["https://docs.mistral.ai/","https://docs.mistral.ai/getting-started/quickstarts/studio/activate-and-generate-api-key","https://docs.mistral.ai/getting-started/quickstarts/admin/manage-workspaces"],
+    "verified":false,
+    "checked":"2026-09-28"
+  },
+  "openrouter": {
+    "plan":"Free model variants (model ID ending :free)",
+    "limits":[
+      {"scope":"requests","per":"minute","amount":20,"applies_to":"free-model requests; platform-wide limits are shared across accounts and API keys"},
+      {"scope":"requests","per":"day","amount":50,"applies_to":"accounts with less than $10 in all-time credits purchased"},
+      {"scope":"requests","per":"day","amount":1000,"applies_to":"accounts that have purchased at least $10 in all-time credits (official docs say higher limit begins one credit below threshold to account for fees)"}
+    ],
+    "reset": {
+      "type":"fixed",
+      "window_hours":24,
+      "reset_time_utc":null,
+      "weekday":null,
+      "day_of_month":null,
+      "timezone":"UTC",
+      "note":"Daily counter is for the current UTC day, resetting at 00:00 UTC. Minute limit reset behavior is not specified as rolling or fixed in the cited documentation; honor X-RateLimit-Reset/Retry-After on platform rate-limit errors. Purchased-credit threshold is based on all-time purchases, not a daily reset."
+    },
+    "per_model_or_account":"account",
+    "notes":"Caps apply to :free model variants. Free-model daily usage is exposed by GET https://openrouter.ai/api/v1/key as free_model_daily_requests. Additional keys/accounts do not increase limits; capacity is governed globally, though limits differ by model. BYOK/exempt accounts may not be gated. With at least $10 purchased, free-model daily request allowance increases from 50 to 1000; per-minute remains 20.",
+    "source_urls":["https://openrouter.ai/docs/limits"],
+    "verified":true,
+    "checked":"2026-09-28"
+  },
+  "nvidia": {
+    "plan":"NVIDIA Build API Catalog / NIM hosted trial endpoints",
+    "limits":[],
+    "reset": {
+      "type":"rolling",
+      "window_hours":null,
+      "reset_time_utc":null,
+      "weekday":null,
+      "day_of_month":null,
+      "timezone":null,
+      "note":"A universal free-credit balance, numeric rate limit, and reset schedule could not be verified from the official endpoint documentation fetched. Limits may vary by endpoint/account; check the live NVIDIA API Catalog/console and response headers."
+    },
+    "per_model_or_account":"account",
+    "notes":"Official Build endpoint documentation confirms API access but does not establish common numeric free-tier credits or reset rules. Treat limits as endpoint/account-specific and unverified.",
+    "source_urls":["https://build.nvidia.com/nvidia/llama-3_1-nemotron-ultra-253b-v1"],
+    "verified":false,
+    "checked":"2026-09-28"
+  },
+  "huggingface": {
+    "plan":"Inference Providers monthly free credits (Free User)",
+    "limits":[
+      {"scope":"tokens","per":"month","amount":0.10,"applies_to":"USD-equivalent credits for routed Inference Providers requests; amount is credit value, not a token count"}
+    ],
+    "reset": {
+      "type":"fixed",
+      "window_hours":null,
+      "reset_time_utc":null,
+      "weekday":null,
+      "day_of_month":null,
+      "timezone":null,
+      "note":"Monthly credits are credited every month and applied automatically. The exact monthly reset day/time/timezone is not specified in the public documentation. Free-user credit amount is subject to change."
+    },
+    "per_model_or_account":"account",
+    "notes":"$0.10 monthly for Free Users, applicable to routed Inference Providers use; additional pay-as-you-go usage requires purchased credits. Custom provider keys are billed by the provider and do not consume Hugging Face monthly credits. Team/Enterprise credit pool is $2 per seat and shared among organization members.",
+    "source_urls":["https://huggingface.co/docs/inference-providers/pricing"],
+    "verified":true,
+    "checked":"2026-09-28"
+  },
+  "opencode": {
+    "plan":"OpenCode Zen limited-time free models",
+    "limits":[],
+    "reset": {
+      "type":"rolling",
+      "window_hours":null,
+      "reset_time_utc":null,
+      "weekday":null,
+      "day_of_month":null,
+      "timezone":null,
+      "note":"Zen documentation lists several limited-time free models but publishes no numeric free request/token quotas or reset schedule. Do not assume any recurring quota reset; free availability can be temporary and model-specific."
+    },
+    "per_model_or_account":"model",
+    "notes":"Zen is described as pay-as-you-go; selected models are temporarily free, with no published quota amounts/reset rules. Monthly usage limits are configurable spending limits, not a documented free-tier allowance. Free-model access should be checked against the live model catalog and account response.",
+    "source_urls":["https://opencode.ai/docs/zen/"],
+    "verified":false,
+    "checked":"2026-09-28"
+  }
+}

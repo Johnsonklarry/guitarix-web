@@ -5,5 +5,5 @@ __pycache__/
 
 # local-model delegation: tool copy + its paper trail
 .delegate/
-tools/delegate/
+tools/delegate/.delegate/
 _review_tmp/

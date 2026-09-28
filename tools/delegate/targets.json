@@ -1,0 +1,272 @@
+{
+  "$comment": [
+    "Registry of models this machine can delegate to.",
+    "transport 'ollama'   -> native Ollama /api/chat. Deterministic, no tools,",
+    "                        returns text or strict JSON. Best for generation.",
+    "transport 'opencode' -> OpenCode session API. Agentic: the model gets",
+    "                        tools and edits files itself inside ITS workspace.",
+    "Health of every target:  delegate.py health"
+  ],
+  "default_target": "coder",
+  "effort_defaults": {
+    "classify": "low",
+    "generate": "low",
+    "edit": "medium",
+    "explain": "low",
+    "review": "high"
+  },
+  "targets": {
+    "coder": {
+      "transport": "ollama",
+      "base_url": "http://127.0.0.1:11434",
+      "model": "qwen3-coder:30b",
+      "context_tokens": 262144,
+      "notes": "RTX 5070 Ti, this machine. Loopback only - see README 'LAN exposure'. num_ctx is what is actually requested; context_tokens is the model maximum. Was 32k; lowered to 16k after the container restarted with the GPU at 15.8/16.3 GB (cause unconfirmed).",
+      "options": {
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "num_ctx": 16384
+      },
+      "good_for": [
+        "bulk generation",
+        "boilerplate",
+        "docstrings",
+        "test stubs",
+        "format translation"
+      ],
+      "bad_for": [
+        "architecture",
+        "security-sensitive code",
+        "anything subtle",
+        "intricate parsing (4/10 on the diff_lines bake-off)"
+      ],
+      "family": "qwen",
+      "cost": "local"
+    },
+    "small": {
+      "transport": "ollama",
+      "base_url": "http://192.168.1.110:11434",
+      "model": "qwen3:8b",
+      "context_tokens": 40960,
+      "notes": "GTX 1070. num_ctx 12288 is the largest that stays 100% in VRAM; above it the model spills to CPU. context_tokens is the model maximum, not what is requested.",
+      "options": {
+        "temperature": 0.1,
+        "top_p": 0.9,
+        "num_ctx": 12288
+      },
+      "good_for": [
+        "classification",
+        "triage",
+        "summarization",
+        "yes/no extraction"
+      ],
+      "bad_for": [
+        "code you intend to keep"
+      ],
+      "family": "qwen",
+      "cost": "local"
+    },
+    "oc-coder": {
+      "transport": "opencode",
+      "base_url": "http://192.168.1.100:4096",
+      "provider_id": "ollama-5070",
+      "model": "qwen3-coder:30b",
+      "notes": "Agentic. Edits files in the OpenCode server's own workspace, NOT this repo. WARNING: via OpenCode's /v1 endpoint num_ctx can't be sent, so the server default (4096) applies and OpenCode's scaffold gets truncated. Fix with OLLAMA_CONTEXT_LENGTH on the Ollama server.",
+      "good_for": [
+        "scoped multi-file refactors",
+        "tasks needing file exploration"
+      ],
+      "bad_for": [
+        "anything you want landed directly in this working tree"
+      ],
+      "family": "qwen",
+      "cost": "local"
+    },
+    "oc-small": {
+      "transport": "opencode",
+      "base_url": "http://192.168.1.100:4096",
+      "provider_id": "ollama-110",
+      "model": "qwen3:8b",
+      "notes": "Agentic on the GTX 1070. Agent scaffolding alone costs ~2.4k tokens of its 41k window, so keep briefs short. WARNING: via OpenCode's /v1 endpoint num_ctx can't be sent, so the server default (4096) applies and OpenCode's scaffold gets truncated. Fix with OLLAMA_CONTEXT_LENGTH on the Ollama server.",
+      "good_for": [
+        "small single-file edits",
+        "grep-and-report sweeps",
+        "triage"
+      ],
+      "bad_for": [
+        "anything needing sustained context or multi-file reasoning"
+      ],
+      "family": "qwen",
+      "cost": "local"
+    },
+    "gpt-build": {
+      "transport": "opencode",
+      "base_url": "http://192.168.1.100:4096",
+      "provider_id": "openai",
+      "model": "gpt-6-sol",
+      "family": "openai",
+      "cost": "subscription",
+      "provisional": false,
+      "notes": "gpt-6-sol. The workhorse: all building. diff_lines bake-off 10/10 on both runs of the corrected brief (and handled the ambiguous original the way git works). ~16-27s.",
+      "good_for": [
+        "multi-file features",
+        "non-trivial logic"
+      ]
+    },
+    "gemini-review": {
+      "transport": "opencode",
+      "base_url": "http://192.168.1.100:4096",
+      "provider_id": "google",
+      "model": "gemini-3.1-pro-preview",
+      "family": "gemini",
+      "cost": "free-tier",
+      "provisional": true,
+      "notes": "Second-opinion reviewer for large features. Different family from the builder.",
+      "good_for": [
+        "architecture review",
+        "second opinion"
+      ],
+      "disabled": "free tier has no quota for gemini-3.1-pro-preview (quota exceeded on first call)"
+    },
+    "cerebras-fast": {
+      "transport": "opencode",
+      "base_url": "http://192.168.1.100:4096",
+      "provider_id": "cerebras",
+      "model": "gpt-oss-120b",
+      "family": "gpt-oss",
+      "cost": "free-tier",
+      "provisional": true,
+      "notes": "Very fast inference. Scaffolding and quick second opinions.",
+      "good_for": [
+        "scaffolding",
+        "quick second opinion"
+      ],
+      "disabled": "ContextOverflowError on every call: OpenCode's ~6-9k token agent scaffold exceeds the free tier's context"
+    },
+    "claude-review": {
+      "transport": "opencode",
+      "base_url": "http://192.168.1.100:4096",
+      "provider_id": "anthropic",
+      "model": "claude-opus-5-5",
+      "family": "anthropic",
+      "cost": "paid",
+      "provisional": true,
+      "notes": "Final reviewer for large or risky features only. Paid per token; the orchestrator is Claude Code itself, not this.",
+      "good_for": [
+        "security-sensitive review",
+        "final sign-off on large features"
+      ],
+      "disabled": "OpenCode's Anthropic key is rejected: 'invalid x-api-key'. Re-enter it on the OpenCode host, then remove this line"
+    },
+    "gemini-flash": {
+      "transport": "opencode",
+      "base_url": "http://192.168.1.100:4096",
+      "provider_id": "google",
+      "model": "gemini-3.8-flash",
+      "family": "gemini",
+      "cost": "free-tier",
+      "provisional": false,
+      "notes": "Verified 2026-09-28. Free tier, rate-limited. Scaffolding and cross-family second opinions.",
+      "good_for": [
+        "project skeletons",
+        "config files",
+        "second-opinion review"
+      ]
+    },
+    "gpt-fast": {
+      "transport": "opencode",
+      "base_url": "http://192.168.1.100:4096",
+      "provider_id": "openai",
+      "model": "gpt-6-luna",
+      "family": "openai",
+      "cost": "subscription",
+      "provisional": false,
+      "notes": "gpt-6-luna. Fast (~10s) but less reliable on intricate code: with the corrected diff_lines brief it scored 9/10 then 8/10, missing a different real case each run. Scaffolding and small test files only.",
+      "good_for": [
+        "scaffolding",
+        "small test files",
+        "boilerplate"
+      ]
+    },
+    "cerebras-direct": {
+      "transport": "openai_compat",
+      "base_url": "https://api.cerebras.ai/v1",
+      "model": "gpt-oss-120b",
+      "api_key_env": "CEREBRAS_API_KEY",
+      "family": "gpt-oss",
+      "cost": "free-tier",
+      "notes": "Direct API. Planted-bug review: 3/3 in 1.2s, free. gpt-oss is OpenAI's open-weights model, so it shares lineage with the builder: always pair it with a non-OpenAI reviewer.",
+      "options": {
+        "max_tokens": 8192
+      }
+    },
+    "gemini-direct": {
+      "transport": "openai_compat",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "model": "gemini-3.8-flash",
+      "api_key_env": "GEMINI_API_KEY",
+      "family": "gemini",
+      "cost": "free-tier",
+      "notes": "Direct endpoint works (PONG in 4.9s, 157 tokens vs 8,868 via OpenCode), but returned HTTP 503 on 3 review attempts in a row. Not routed until it's reliable.",
+      "options": {
+        "max_tokens": 8192
+      }
+    },
+    "claude-direct": {
+      "transport": "anthropic",
+      "base_url": "https://api.anthropic.com",
+      "model": "claude-opus-5-5",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "family": "anthropic",
+      "cost": "paid",
+      "notes": "Direct Messages API, paid. Planted-bug review: 3/3 in 16s, clearest explanations. Primary reviewer for large or risky changes.",
+      "options": {
+        "max_tokens": 8192
+      }
+    }
+  },
+  "routes": {
+    "$comment": [
+      "role -> size -> {primary, second}. OpenAI (subscription) carries the workload: build, scaffold, tests.",
+      "Review never uses the builder's family (enforced). cerebras-direct is gpt-oss (OpenAI open weights),",
+      "so each review route also includes a different lineage: coder (Qwen) or claude-direct (Anthropic).",
+      "Orchestrator is Claude Code (this window); it is not a route."
+    ],
+    "build": {
+      "small": {
+        "primary": "gpt-build"
+      },
+      "large": {
+        "primary": "gpt-build"
+      }
+    },
+    "scaffold": {
+      "small": {
+        "primary": "gpt-fast"
+      },
+      "large": {
+        "primary": "gpt-build"
+      }
+    },
+    "review": {
+      "small": {
+        "primary": "cerebras-direct",
+        "second": "coder"
+      },
+      "large": {
+        "primary": "claude-direct",
+        "second": "cerebras-direct"
+      }
+    },
+    "tests": {
+      "small": {
+        "primary": "gpt-fast"
+      },
+      "large": {
+        "primary": "gpt-build",
+        "second": "coder"
+      }
+    }
+  },
+  "builder_family": "openai"
+}

@@ -1,0 +1,29 @@
+{
+  "_comment": "All limits below are PLACEHOLDERS for illustration only; they are not real provider limits.",
+  "quota": [
+    {
+      "kind": "requests",
+      "limit": 100,
+      "window": {"type": "rolling", "hours": 5},
+      "reserve_pct": 10
+    },
+    {
+      "kind": "requests",
+      "limit": 100,
+      "window": {"type": "daily", "reset_utc": "00:00"},
+      "reserve_pct": 10
+    },
+    {
+      "kind": "tokens",
+      "limit": 1000,
+      "window": {"type": "weekly", "weekday": 0, "reset_utc": "00:00"},
+      "reserve_pct": 10
+    },
+    {
+      "kind": "requests",
+      "limit": 100,
+      "window": {"type": "monthly", "day": 1, "reset_utc": "00:00"},
+      "reserve_pct": 10
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "openai": {
+    "plan": "ChatGPT subscription with Codex included (subscription-specific allowances; exact account allowance displayed in usage dashboard)",
+    "limits": [
+      {
+        "scope": "requests",
+        "per": "hour",
+        "amount": null,
+        "applies_to": "Codex workload usage in a rolling 5-hour window; enforced as a variable usage allowance, not fixed request count"
+      },
+      {
+        "scope": "requests",
+        "per": "week",
+        "amount": null,
+        "applies_to": "Codex weekly usage allowance; exact allowance/reset shown in account usage dashboard"
+      }
+    ],
+    "reset": {
+      "type": "rolling",
+      "window_hours": 5,
+      "reset_time_utc": null,
+      "weekday": null,
+      "day_of_month": null,
+      "timezone": null,
+      "note": "Five-hour usage window is rolling. An additional weekly limit may also apply and resets according to the account-specific time shown in Settings > Usage/dashboard; the weekly window is not documented with a universal UTC weekday/time. Usage is workload/allowance-based, affected by model, context, task complexity, tools, and local versus cloud execution, not a published fixed request count. GPT-6 Sol and GPT-6 Luna use differing allowance rates: official estimates show Plus local messages per 5 hours Sol 15-150 versus Luna 350-3,000, with corresponding plan-specific estimates; usage dashboard is authoritative."
+    },
+    "per_model_or_account": "account",
+    "notes": "Codex and ChatGPT Work share the available allowance where enabled. Official public materials describe model-dependent message estimates, not token quotas or fixed requests. The user-specific dashboard or CLI /status is the authoritative remaining allowance and reset. GPT-6 Sol generally consumes substantially more allowance per comparable workload than GPT-6 Luna. No exact universal weekly amount/reset time is published.",
+    "source_urls": [
+      "https://developers.openai.com/codex/pricing",
+      "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan"
+    ],
+    "verified": true,
+    "checked": "2026-09-28"
+  },
+  "github-copilot": {
+    "plan": "Copilot Free",
+    "limits": [
+      {
+        "scope": "requests",
+        "per": "month",
+        "amount": 2000,
+        "applies_to": "Inline code completions; Free monthly completions allowance"
+      },
+      {
+        "scope": "tokens",
+        "per": "month",
+        "amount": null,
+        "applies_to": "GitHub AI Credits allowance for model-based features; Free allowance exists but the official plan/billing pages consulted do not state its numeric amount"
+      }
+    ],
+    "reset": {
+      "type": "fixed",
+      "window_hours": 0,
+      "reset_time_utc": "00:00:00",
+      "weekday": null,
+      "day_of_month": 1,
+      "timezone": "UTC",
+      "note": "Monthly AI credit allowance resets at 00:00:00 UTC on the first day of each calendar month, independent of subscription billing date; unused included credits do not carry over. Copilot Free model access is auto model selection only. Claude models are not selectable on Free; Free only offers automatic model selection."
+    },
+    "per_model_or_account": "account",
+    "notes": "Free has 2,000 code completions per month plus an AI Credits allowance for AI-model features. The numeric Free AI Credits amount is not specified on the official billing page. Free models are accessed through automatic model selection only; the documented selectable Claude model list is for paid plans, so do not treat Claude as an included Free selectable model. Model-specific consumption in AI credits is token/model dependent.",
+    "source_urls": [
+      "https://docs.github.com/en/copilot/get-started/plans-for-github-copilot",
+      "https://docs.github.com/en/copilot/concepts/billing-and-usage/individuals/billing",
+      "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing"
+    ],
+    "verified": true,
+    "checked": "2026-09-28"
+  },
+  "groq": {
+    "plan": "Free Plan",
+    "limits": [
+      {
+        "scope": "requests",
+        "per": "minute",
+        "amount": 30,
+        "applies_to": "Per-model RPM on models listed in Groq's Free Plan rate-limit table; exact limit varies by model"
+      },
+      {
+        "scope": "requests",
+        "per": "day",
+        "amount": 1000,
+        "applies_to": "Per-model RPD on openai/gpt-oss-120b, openai/gpt-oss-20b, openai/gpt-oss-safeguard-20b, and qwen/qwen3.8-27b; other models have model-specific limits"
+      },
+      {
+        "scope": "tokens",
+        "per": "minute",
+        "amount": 8000,
+        "applies_to": "Per-model TPM for the listed GPT OSS and Qwen models; other models have model-specific limits"
+      },
+      {
+        "scope": "tokens",
+        "per": "day",
+        "amount": 200000,
+        "applies_to": "Per-model TPD for the listed GPT OSS and Qwen models; other models have model-specific limits"
+      }
+    ],
+    "reset": {
+      "type": "rolling",
+      "window_hours": 24,
+      "reset_time_utc": null,
+      "weekday": null,
+      "day_of_month": null,
+      "timezone": null,
+      "note": "Groq documents per-minute and per-day counters, and exposes per-counter reset countdowns in response headers (x-ratelimit-reset-requests and x-ratelimit-reset-tokens); limits are organization-level and model-specific. Daily reset is a rolling/countdown interval as communicated by response headers; no universal fixed UTC reset time is documented. Values shown are only examples/base limits and current exact organization limits are on the Console Limits page."
+    },
+    "per_model_or_account": "account",
+    "notes": "Groq limits apply at organization level (shared among its users/keys), while thresholds vary by model. Free Plan table gives different values for audio and other models; the listed 30 RPM/1,000 RPD/8K TPM/200K TPD values are for the specified GPT OSS/Qwen family only, not universal values. Account-specific limits and countdown headers should be used by a scheduler. Cached tokens do not count toward rate limits.",
+    "source_urls": [
+      "https://console.groq.com/docs/rate-limits"
+    ],
+    "verified": true,
+    "checked": "2026-09-28"
+  },
+  "cloudflare-workers-ai": {
+    "plan": "Workers Free (Workers Paid also receives the same free daily allocation)",
+    "limits": [
+      {
+        "scope": "tokens",
+        "per": "day",
+        "amount": 10000,
+        "applies_to": "Total Workers AI neurons across account; free daily allocation; Workers Paid charges above this amount"
+      },
+      {
+        "scope": "requests",
+        "per": "minute",
+        "amount": 300,
+        "applies_to": "Default text generation task rate limit; varies by task type and model, and models requiring Workers Paid have distinct account/model limits"
+      }
+    ],
+    "reset": {
+      "type": "fixed",
+      "window_hours": 24,
+      "reset_time_utc": "00:00",
+      "weekday": null,
+      "day_of_month": null,
+      "timezone": "UTC",
+      "note": "Daily Neuron allowance resets at 00:00 UTC. The 10,000 neurons/day allocation is shared at account level and counts inference usage; exceeding it on Workers Free causes further operations to fail. Requests/minute throttles are separately applied by task type/model."
+    },
+    "per_model_or_account": "account",
+    "notes": "Workers AI pricing states 10,000 Neurons per day at no charge for Free and Paid. Neurons represent model compute and are not tokens in the usual LLM-token sense. Published task-specific RPM limits are separate from the daily neuron allowance; text generation default is 300 RPM, while paid-required models may be 20 RPM on standard billing or 50 RPM using prepaid AI Gateway credits, per account and model.",
+    "source_urls": [
+      "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+      "https://developers.cloudflare.com/workers-ai/platform/limits/"
+    ],
+    "verified": true,
+    "checked": "2026-09-28"
+  }
+}
