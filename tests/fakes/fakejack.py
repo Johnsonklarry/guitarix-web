@@ -90,11 +90,21 @@ def remove_client(client):
     save(state)
 
 
+def _edge(state, a, b):
+    """
+    One link, one representation: the output end first, whichever way round
+    the caller named them. Without this, connecting a pair and then the same
+    pair reversed stores two edges, and connections_of() reports the peer
+    twice -- which is exactly the list reamp.py saves and restores the
+    guitar's wiring from.
+    """
+    return [a, b] if state['ports'][a] == 'output' else [b, a]
+
+
 def connect(src, dst):
     """Connect two ports. Return True on success."""
     state = load()
 
-    # Check if ports exist
     if src not in state['ports'] or dst not in state['ports']:
         return False
 
@@ -104,12 +114,11 @@ def connect(src, dst):
     if sorted((state['ports'][src], state['ports'][dst])) != ['input', 'output']:
         return False
 
-    # Check if already connected
-    if [src, dst] in state['connections']:
+    edge = _edge(state, src, dst)
+    if edge in state['connections']:
         return False
 
-    # Add connection
-    state['connections'].append([src, dst])
+    state['connections'].append(edge)
     save(state)
     return True
 
@@ -117,14 +126,17 @@ def connect(src, dst):
 def disconnect(src, dst):
     """Disconnect two ports. Return True on success."""
     state = load()
-    
-    # Check if connected
+
+    if src not in state['ports'] or dst not in state['ports']:
+        return False
+
+    edge = _edge(state, src, dst)
     try:
-        state['connections'].remove([src, dst])
-        save(state)
-        return True
+        state['connections'].remove(edge)
     except ValueError:
         return False
+    save(state)
+    return True
 
 
 def connections_of(port):
