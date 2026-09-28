@@ -2,3 +2,8 @@ __pycache__/
 *.py[cod]
 .venv/
 *.save
+
+# local-model delegation: tool copy + its paper trail
+.delegate/
+tools/delegate/
+_review_tmp/

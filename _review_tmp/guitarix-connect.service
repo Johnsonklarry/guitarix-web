@@ -1,0 +1,18 @@
+# This unit ensures the guitar is connected to guitarix after JACK has fully initialized.
+# Previously, it used Requires=guitarix.service and After=guitarix.service which caused
+# the connection script to run before jackd was ready. Now it waits for both jackd and
+# guitarix to be ready before attempting the connection.
+
+[Unit]
+Description=Connect guitar input to guitarix amplifier
+After=guitarix-jack.service guitarix.service
+Requires=guitarix-jack.service guitarix.service
+
+[Service]
+Type=oneshot
+User=ljohnson
+ExecStart=/home/ljohnson/guitarix-web/tools/connect-input.sh
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

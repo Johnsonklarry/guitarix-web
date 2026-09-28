@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import signal
+import wave
+import time
+import threading
+import subprocess
+
+# fakejack lives in the parent directory, tests/fakes/
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import fakejack
+
+# Global variables to manage the process state
+recording_thread = None
+stdout_thread = None
+client_ports = None
+is_recording = False
+is_monitoring = False
+
+
+def signal_handler(sig, frame):
+    global is_recording, is_monitoring
+    if is_recording:
+        # Stop recording and write final WAV file
+        is_recording = False
+        if recording_thread:
+            recording_thread.join()
+    elif is_monitoring:
+        # Stop monitoring
+        is_monitoring = False
+        if stdout_thread:
+            stdout_thread.join()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+
+
+def write_silence_to_wav(path, duration=10):
+    """
+    Write a WAV file with silence.
+    """
+    sample_rate = 48000
+    bits_per_sample = 16
+    channels = 2
+    
+    # Calculate number of frames
+    frames = int(sample_rate * duration)
+    
+    # Open the WAV file for writing
+    with wave.open(path, 'wb') as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(bits_per_sample // 8)
+        wav_file.setframerate(sample_rate)
+        
+        # Write silence frames
+        silence_frame = b'\x00' * (bits_per_sample // 8) * channels
+        for _ in range(frames):
+            wav_file.writeframes(silence_frame)
+
+
+def record_wav(client, path):
+    """
+    Record audio from JACK client and write to WAV file.
+    """
+    global is_recording
+    is_recording = True
+    
+    # Register input ports
+    fakejack.add_ports({f'{client}:input_1': 'input', f'{client}:input_2': 'input'})
+    
+    try:
+        # Create a WAV file with silence initially
+        write_silence_to_wav(path, 0.1)
+        
+        # Simulate real-time recording by periodically updating the file
+        start_time = time.time()
+        while is_recording:
+            elapsed = time.time() - start_time
+            # Update the WAV file with more silence (simulating audio input)
+            write_silence_to_wav(path, elapsed + 1.0)
+            time.sleep(0.1)  # Simulate real-time processing
+    except Exception as e:
+        print(f"Error during recording: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        # Remove the client ports
+        fakejack.remove_client(client)
+
+
+def monitor_mp3(client):
+    """
+    Monitor audio from JACK client and output MP3 to stdout.
+    """
+    global is_monitoring
+    is_monitoring = True
+    
+    # Register input ports
+    fakejack.add_ports({f'{client}:input_1': 'input', f'{client}:input_2': 'input'})
+    
+    try:
+        # Write MP3 data to stdout in chunks
+        while is_monitoring:
+            # Simulate MP3 data (just some bytes)
+            mp3_chunk = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09"
+            sys.stdout.buffer.write(mp3_chunk)
+            sys.stdout.flush()
+            time.sleep(0.01)  # Simulate real-time processing
+    except Exception as e:
+        print(f"Error during monitoring: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        # Remove the client ports
+        fakejack.remove_client(client)
+
+
+def transcode(args):
+    """
+    ffmpeg -hide_banner -loglevel error -y -i INPUT.wav -c:a libmp3lame \
+           -b:a 192k OUTPUT.mp3
+
+    The real thing re-encodes; this writes a file of a plausible size for the
+    input's duration at the asked-for bitrate. The test checks that the output
+    exists and is named right, never what is inside it -- and a fake that
+    produced a real MP3 would only be testing lame.
+    """
+    src = dst = None
+    bitrate = 192000
+    skip = ("-i", "-b:a", "-c:a", "-f", "-loglevel", "-ac")
+    for i, a in enumerate(args):
+        if a == "-i" and i + 1 < len(args):
+            src = args[i + 1]
+        elif a == "-b:a" and i + 1 < len(args):
+            raw = args[i + 1].lower().rstrip("k")
+            try:
+                bitrate = int(float(raw) * 1000)
+            except ValueError:
+                pass
+        elif not a.startswith("-") and i and args[i - 1] not in skip:
+            dst = a
+
+    if not src or not os.path.exists(src):
+        print("Error: no such input file: %s" % src, file=sys.stderr)
+        sys.exit(1)
+    if not dst:
+        print("Error: no output file given", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with wave.open(src, "rb") as w:
+            seconds = w.getnframes() / float(w.getframerate() or 1)
+    except Exception as exc:
+        print("Error: cannot read %s: %s" % (src, exc), file=sys.stderr)
+        sys.exit(1)
+
+    size = max(4, int(seconds * bitrate / 8))
+    header = bytes([255, 251])          # enough of a frame header to look like one
+    try:
+        with open(dst, "wb") as fh:
+            fh.write(header)
+            fh.write(bytes(size - len(header)))
+    except OSError as exc:
+        print("Error: cannot write %s: %s" % (dst, exc), file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
+
+
+def main():
+    args = sys.argv[1:]
+    
+    if len(args) < 2:
+        print("Error: Not enough arguments.", file=sys.stderr)
+        sys.exit(1)
+    
+    # Check for output format (must not be jack)
+    output_format_index = -1
+    for i in range(len(args)):
+        if args[i] == '-f' and i + 1 < len(args) and args[i+1] == 'jack':
+            output_format_index = i + 1
+            break
+    
+    # If we find a -f jack as an output format, exit with error
+    if output_format_index != -1 and (output_format_index + 1 >= len(args) or args[output_format_index+1] != '-i'):
+        print("Error: JACK cannot be used as an output format.", file=sys.stderr)
+        sys.exit(1)
+    
+    # Check for input format
+    input_format_index = -1
+    for i in range(len(args)):
+        if args[i] == '-f' and i + 1 < len(args) and args[i+1] == 'jack':
+            input_format_index = i + 1
+            break
+    
+    # If we find a -f jack as an input format, process accordingly
+    if input_format_index != -1:
+        try:
+            # Find the client name (after -i)
+            i_index = args.index('-i')
+            if i_index + 1 >= len(args):
+                print("Error: No client specified.", file=sys.stderr)
+                sys.exit(1)
+            client = args[i_index + 1]
+            
+            # Check for recording vs monitoring
+            output_file = None
+            bitrate = None
+            
+            # Look for -y (output file) or -b:a (bitrate)
+            if '-y' in args:
+                y_index = args.index('-y')
+                if y_index + 1 < len(args):
+                    output_file = args[y_index + 1]
+                    
+            # Look for bitrate
+            if '-b:a' in args:
+                b_index = args.index('-b:a')
+                if b_index + 1 < len(args):
+                    bitrate = args[b_index + 1]
+                    
+            # If we have an output file, it's recording
+            if output_file:
+                record_wav(client, output_file)
+            else:
+                # Otherwise, it's monitoring/encoding
+                monitor_mp3(client)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # No -f jack anywhere: a plain file-to-file transcode, which is how
+        # recorder.py renders an export to MP3. No JACK is involved and the
+        # fake graph is not touched.
+        transcode(args)
+
+
+if __name__ == "__main__":
+    main()
