@@ -26,8 +26,8 @@ Run it
   README.md               this file
   app.py                  the web app: routes, live connection, state, every action
   requirements.txt        Python packages (the apt ones are listed inside)
-  gxweb.service           start at boot, as a systemd user service
-  gxweb-demo.service      the demo-only copy, safe to port-forward
+  guitarix-web.service    start at boot, as a systemd system service
+  guitarix-demo.service   the demo-only copy, safe to port-forward
 
 Talking to the rig
   gx_rpc.py               the guitarix socket: calls, notifications, reconnecting
@@ -79,7 +79,7 @@ guitarix -N -p 7000        # or with its window: guitarix -p 7000
 python3 app.py             # then open http://<pi>:5000
 ```
 
-To have it start at boot, see `gxweb.service` -- it's a user service, with the
+To have it start at boot, see `guitarix-web.service` -- it's a system service, with the
 steps in its header. Anything below that isn't working is most likely a port
 name: see **Ports to check on the Pi**.
 
@@ -455,7 +455,7 @@ stream, the parameter list, the live connection), and never contacts
 guitarix. The server tests check each of those refusals.
 
 ```bash
-GX_DEMO_ONLY=1 GX_WEB_PORT=5080 python3 app.py      # or: gxweb-demo.service
+GX_DEMO_ONLY=1 GX_WEB_PORT=5080 python3 app.py      # or: guitarix-demo.service
 ```
 
 Forward 5080 for friends; keep 5000 on your LAN. To use the *real* app away
