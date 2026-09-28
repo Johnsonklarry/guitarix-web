@@ -14,7 +14,7 @@ change to every open browser, so a phone and a laptop stay in step.
 ## Contents
 
 - **Getting started:** [Quick start](#quick-start), [Checking it works](#checking-it-works)
-- **Using it:** [Two layouts](#two-layouts), [Live mode](#live-mode), [Saving and creating presets](#saving-and-creating-presets), [Importing presets](#importing-presets), [Recording, reamping and backing tracks](#recording-reamping-and-backing-tracks), [On a phone: installing it as an app](#on-a-phone-installing-it-as-an-app), [Demo mode](#demo-mode)
+- **Using it:** [Two layouts](#two-layouts), [Live mode](#live-mode), [Saving and creating presets](#saving-and-creating-presets), [Importing presets](#importing-presets), [Recording, reamping and backing tracks](#recording-reamping-and-backing-tracks), [On a phone: installing it as an app](#on-a-phone-installing-it-as-an-app), [Demo mode](#demo-mode), [Broadcast mode](#broadcast-mode)
 - **Tuning the controls:** [Adding controls](#adding-controls), [Taming a plugin with too many parameters](#taming-a-plugin-with-too-many-parameters), [Cryptic parameter names](#cryptic-parameter-names)
 - **How it works:** [How the sync works](#how-the-sync-works), [When the engine goes quiet mid-operation](#when-the-engine-goes-quiet-mid-operation)
 - **When something's wrong:** [Empty presets, empty EQ, empty effects](#empty-presets-empty-eq-empty-effects), [Loose ends](#loose-ends)
@@ -61,6 +61,7 @@ Tools for your build
 Checks
   tests/lint.py           undefined names and stale references between files
   tests/run_server_tests.py   the server, against fake guitarix / JACK / ffmpeg / mpv
+  tests/broadcast_tests.py    broadcast mode: what a stranger can and can't reach
   tests/check_page.js     the page, against a fake browser
   tests/ui_audit.py       looks and feel, measured in a real browser
   tests/fakes/engine.py   a fake guitarix, run on a spare port
@@ -116,6 +117,7 @@ Then the automated suites:
 ```bash
 python3 tests/lint.py               # undefined names, stale references between files
 python3 tests/run_server_tests.py   # the server, against fake guitarix / JACK / ffmpeg / mpv
+python3 tests/broadcast_tests.py    # broadcast mode: what a stranger can and can't reach
 node tests/check_page.js            # the page, against a fake browser
 ```
 
@@ -462,6 +464,48 @@ Forward 5080 for friends; keep 5000 on your LAN. To use the *real* app away
 from home, put it behind a login -- an Access List in Nginx Proxy Manager --
 or reach your LAN through a VPN such as Tailscale or WireGuard, rather than
 forwarding it.
+
+## Broadcast mode
+
+The demo shows people what the app does. Broadcast shows them what *you* are
+doing: the preset you're on right now, whether a take is rolling, how many
+takes there are, and a Listen button that plays the rig. It's the read-only
+shop window, and it's what `amp.larebear.org` is for.
+
+The page is deliberately almost nothing -- the preset name large enough to read
+from across a room, the bank under it, a lamp, a take count, and the stream.
+There are no controls on it, because there is nothing a stranger is allowed to
+do.
+
+`GX_BROADCAST=1` is the difference. Unlike the demo, which is made-up data and
+never opens the connection at all, broadcast talks to the real guitarix -- so
+it has to be the one that can't touch anything:
+
+- every socket event but `connect` is refused, by never registering the real
+  handler in the first place. In broadcast mode the code that could change a
+  preset isn't wired to anything;
+- of what the server pushes out, only the preset, the connection status and the
+  recording state get through. The parameter values, the bank list, the take
+  list, the toasts and everything else are dropped at the emit;
+- over HTTP it answers `GET` and nothing else, for the page, its two files, the
+  manifest and `/monitor.mp3`. The parameter list, the recordings and the
+  uploads all return 403.
+
+The snapshot it publishes names its fields rather than removing the ones it
+doesn't want, so adding a field to the full snapshot later can't leak it here
+by accident.
+
+```bash
+GX_BROADCAST=1 GX_WEB_PORT=5090 python3 app.py      # or: guitarix-broadcast.service
+```
+
+Forward 5090 -- not 5000, and not the demo's 5080. `python3 tests/broadcast_tests.py`
+checks each of those refusals, and is the thing to run before you forward
+anything.
+
+Behind a reverse proxy this is the one hostname that stays open. If you put the
+rest of the app behind a login, leave broadcast outside it: being reachable is
+the entire point of it.
 
 ## Adding controls
 
