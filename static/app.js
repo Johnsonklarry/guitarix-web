@@ -1261,7 +1261,18 @@ function takeNameCell(item) {
     if (item.settings) {
       const b = smallBadge('Settings', 'What was live when this was recorded — tap to load it');
       b.classList.add('is-action');
+      // Keyboard access: a span is not focusable or announced as a control, so
+      // give it button semantics and Enter/Space activation.
+      b.setAttribute('role', 'button');
+      b.tabIndex = 0;
+      b.setAttribute('aria-label', 'Load the settings recorded with ' + item.name);
       b.addEventListener('click', function () { loadTakeSettings(item.settings); });
+      b.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          loadTakeSettings(item.settings);
+        }
+      });
       badges.appendChild(b);
     }
     td.appendChild(badges);
