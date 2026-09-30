@@ -203,7 +203,7 @@ def rec_payload():
     status = rec.status()
     status["reamp"] = reamp.status()
     status["backing"] = backing.status()
-    status["export"] = _export["job"]
+    status["export"] = _export_job()
     return status
 
 
@@ -232,7 +232,44 @@ def monitor_sources():
 
 monitor = Monitor(monitor_sources)
 _export = {"job": None, "cancel": False}
+# One lock guards every read and write of _export. Never call out to the
+# rig, recorder or socket while holding it: these helpers only touch the dict.
+_export_lock = threading.Lock()
 state = AmpState()
+
+
+def _export_job():
+    """The running export job (a dict that is only ever replaced, never edited), or None."""
+    with _export_lock:
+        return _export["job"]
+
+
+def _export_claim(job):
+    """Atomically reserve the export slot. False if a job already holds it."""
+    with _export_lock:
+        if _export["job"]:
+            return False
+        _export.update(job=job, cancel=False)
+        return True
+
+
+def _export_release():
+    with _export_lock:
+        _export["job"] = None
+
+
+def _export_cancelled():
+    with _export_lock:
+        return _export["cancel"]
+
+
+def _export_request_cancel():
+    """Flag the running job for cancelling. False (and no flag) if none is running."""
+    with _export_lock:
+        if not _export["job"]:
+            return False
+        _export["cancel"] = True
+        return True
 
 
 def done(op, ok):
@@ -1309,7 +1346,7 @@ def client_export_start(msg):
     problem = None
     if not take or not dry:
         problem = "That take has no dry recording to export from."
-    elif _export["job"]:
+    elif _export_job():
         problem = "An export is already running."
     elif reamp.active:
         problem = "Stop the reamp first."
@@ -1329,7 +1366,10 @@ def client_export_start(msg):
         tag = "export - " + label.split("/", 1)[-1]
     else:
         source, label, tag = "live", "the current settings", "export"
-    _export.update(job={"take": take, "label": label, "format": fmt}, cancel=False)
+    # the checks above are only a fast path; this is the atomic check-and-claim
+    if not _export_claim({"take": take, "label": label, "format": fmt}):
+        toast("An export is already running.", "error")
+        return done(op, False)
     socketio.emit("rec", rec_payload())
 
     def run():
@@ -1363,7 +1403,7 @@ def client_export_start(msg):
                     break
                 time.sleep(0.25)
 
-            if _export["cancel"]:
+            if _export_cancelled():
                 if out:
                     rec.delete(out)
                 out = None
@@ -1387,7 +1427,7 @@ def client_export_start(msg):
                     _restore_state(snap)
                 except (RpcError, OSError, TimeoutError) as exc:
                     toast("The export finished, but the settings couldn't be put back: %s" % exc, "error")
-            _export["job"] = None
+            _export_release()
             push_recordings()
         if ok:
             toast("Exported %s" % out, "ok")
@@ -1399,8 +1439,7 @@ def client_export_start(msg):
 
 @socketio.on("export_cancel")
 def client_export_cancel(msg=None):
-    if _export["job"]:
-        _export["cancel"] = True
+    if _export_request_cancel():
         reamp.stop()
 
 
