@@ -440,6 +440,12 @@ def demo_only_guard():
 
 @app.route("/")
 def index():
+    # The shop window has its own page and client; the Studio template is wired
+    # to the full snapshot shape and to control events a broadcast server refuses.
+    # A demo-only server keeps the demo page (it never shares a process with a
+    # broadcast one in practice, but the demo branch stays first to be safe).
+    if BROADCAST and not DEMO_ONLY:
+        return render_template("broadcast.html")
     demo = DEMO_ONLY or "demo" in request.args
     return render_template("index.html", demo=demo, demo_only=DEMO_ONLY)
 
