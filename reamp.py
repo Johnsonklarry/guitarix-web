@@ -43,6 +43,7 @@ class Reamp:
         self.player = Player("gxweb-reamp", on_change=self.on_change, on_end=self._ended)
         self._lock = threading.Lock()
         self._session = None   # {"take", "mode", "record", "output", "saved"}
+        self.restore_error = None   # set when the last session couldn't rewire the guitar
 
     @property
     def active(self):
@@ -158,16 +159,29 @@ class Reamp:
             if not s or s.get("finishing"):
                 return
             s["finishing"] = True
+        failed = []
         try:
             if s["record"] and self.rec.recording:
                 self.rec.stop()
-            # put the guitar back, whatever happened
+            # put the guitar back, whatever happened -- one failed connection
+            # must not stop the others being tried
             for port, sources in s["saved"].items():
                 for src in sources:
-                    jackutil.connect(src, port)
+                    try:
+                        ok = jackutil.connect(src, port)
+                    except Exception as exc:
+                        log.warning("reamp: reconnecting %s -> %s raised: %s", src, port, exc)
+                        ok = False
+                    if not ok:
+                        failed.append("%s -> %s" % (src, port))
         finally:
             with self._lock:
                 self._session = None
+        if failed:
+            self.restore_error = "couldn't reconnect: " + ", ".join(failed)
+            log.error("reamp of %s: %s", s["take"], self.restore_error)
+        else:
+            self.restore_error = None
         if reason and reason.startswith("failed"):
             log.warning("reamp of %s ended: %s", s["take"], reason)
         self.on_change()

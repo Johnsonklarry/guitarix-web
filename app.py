@@ -202,6 +202,7 @@ def rec_payload():
     """Everything the Record tab shows about what's happening right now."""
     status = rec.status()
     status["reamp"] = reamp.status()
+    status["reamp_error"] = reamp.restore_error
     status["backing"] = backing.status()
     status["export"] = _export["job"]
     return status
