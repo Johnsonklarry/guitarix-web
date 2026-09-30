@@ -24,7 +24,21 @@ def load():
     # If file exists, load it as-is
     if os.path.exists(path):
         with open(path, 'r') as f:
-            return json.load(f)
+            try:
+                state = json.load(f)
+            except ValueError as e:
+                raise SystemExit("%s is not valid JSON (%s); delete it to "
+                                 "reseed the default rig." % (path, e))
+        # Callers index state['ports'] and state['connections'] directly, so a
+        # truncated or hand-edited file must fail here, with a message, rather
+        # than as a KeyError/TypeError deep inside connect() or remove_client().
+        if (not isinstance(state, dict)
+                or not isinstance(state.get('ports'), dict)
+                or not isinstance(state.get('connections'), list)):
+            raise SystemExit("%s is malformed: expected an object with a "
+                             "'ports' object and a 'connections' list; delete "
+                             "it to reseed the default rig." % path)
+        return state
     
     # Otherwise, seed with default rig
     ports = {
