@@ -34,14 +34,78 @@ log = logging.getLogger("monitor")
 CLIENT = "gxweb-mon"
 FFMPEG = "ffmpeg"
 BITRATE = "160k"
-CHUNK = 4096
-BACKLOG = 48            # chunks a slow listener may fall behind before losing the oldest
+BYTES_PER_SEC = 160000 // 8     # nominal MP3 payload rate at BITRATE
+CHUNK = 1024                    # read1() size: ~51 ms of audio, never wait to fill 4096
+# Lag budget: the most audio a listener may have queued here, in seconds. A slower
+# listener loses its oldest whole MP3 frames until it is back inside the budget.
+# This bounds only the queue in this process, not ffmpeg/browser/proxy buffering.
+LAG_BUDGET = 0.5
+MAX_LAG_BYTES = int(LAG_BUDGET * BYTES_PER_SEC)
+STDERR_TAIL = 2048              # bytes of encoder stderr kept for the log
+
+_KBPS = (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0)   # MPEG-1 layer III
+_HZ = (44100, 48000, 32000, 0)
+
+
+def _read1(stream, size):
+    """One read that returns what is there instead of waiting for `size` bytes."""
+    read = getattr(stream, "read1", None) or stream.read
+    return read(size)
+
+
+def _frame_size(buf):
+    """Length of the MPEG-1 layer III frame whose header starts buf, or 0."""
+    if len(buf) < 4 or buf[0] != 0xff or (buf[1] & 0xfe) != 0xfa:
+        return 0
+    kbps, hz = _KBPS[buf[2] >> 4], _HZ[(buf[2] >> 2) & 3]
+    if not kbps or not hz:
+        return 0
+    return 144000 * kbps // hz + ((buf[2] >> 1) & 1)
+
+
+def _take_frames(pending):
+    """
+    Remove from `pending` (a bytearray) every complete MP3 frame and return
+    them as a list of bytes. Bytes that are not a frame are returned as they
+    are, never dropped, so only whole frames are ever the unit of shedding.
+    """
+    out = []
+    while len(pending) >= 4:
+        size = _frame_size(pending)
+        if size:
+            if len(pending) < size:
+                break                              # wait for the rest of the frame
+            out.append(bytes(pending[:size]))
+            del pending[:size]
+            continue
+        nxt = pending.find(b"\xff", 1)
+        end = len(pending) if nxt < 0 else nxt
+        out.append(bytes(pending[:end]))
+        del pending[:end]
+    return out
+
+
+def _offer(q, item):
+    """Queue `item`, first shedding the oldest items until q is inside the lag budget."""
+    while True:
+        with q.mutex:
+            queued = sum(len(c) for c in q.queue if c)
+        if queued + len(item) <= MAX_LAG_BYTES:
+            break
+        try:
+            q.get_nowait()                         # drop the oldest: stay near live
+        except queue.Empty:
+            break
+    q.put_nowait(item)
 
 
 def encoder_args():
     args = [FFMPEG, "-hide_banner", "-loglevel", "error",
             "-f", "jack", "-i", CLIENT, "-ac", "2",
             "-c:a", "libmp3lame", "-b:a", BITRATE,
+            # no bit reservoir: every frame decodes on its own, so a frame
+            # shed for a slow listener cannot damage the ones after it
+            "-reservoir", "0", "-write_xing", "0", "-id3v2_version", "0",
             "-f", "mp3", "-flush_packets", "1", "pipe:1"]
     if shutil.which("nice"):
         args = ["nice", "-n", "10"] + args        # the amp's realtime work comes first
@@ -65,10 +129,15 @@ class Monitor:
 
     def listen(self):
         """A generator of MP3 bytes, for one listener, for as long as they stay."""
-        q = queue.Queue(maxsize=BACKLOG)
+        q = queue.Queue()                         # bounded by _offer, in seconds
         with self._lock:
+            fresh = self._proc is None or self._proc.poll() is not None
+            if fresh:
+                # A new encoder run gets its own listener set. The old run's
+                # pump keeps the old set and cannot reach these listeners.
+                self._listeners = set()
             self._listeners.add(q)
-            if self._proc is None or self._proc.poll() is not None:
+            if fresh:
                 self._start()
         try:
             while True:
@@ -99,7 +168,8 @@ class Monitor:
             self._proc = None
             return
         proc = self._proc
-        threading.Thread(target=self._pump, args=(proc,), daemon=True).start()
+        threading.Thread(target=self._pump, args=(proc, self._listeners),
+                         daemon=True).start()
         threading.Thread(target=self._wire, args=(proc,), daemon=True).start()
         log.info("monitor started")
 
@@ -113,32 +183,45 @@ class Monitor:
                 proc.kill()
             log.info("monitor stopped: nobody listening")
 
-    def _pump(self, proc):
-        """Encoder output to every listener. A slow one loses its oldest audio, never blocks."""
+    def _pump(self, proc, owned):
+        """
+        Encoder output, as whole MP3 frames, to the listeners of this encoder
+        run (`owned`). A slow one loses its oldest audio, never blocks, and is
+        kept within LAG_BUDGET seconds.
+        """
+        tail = bytearray()
+
+        def drain_stderr():
+            # continuously, so a chatty encoder can never fill the pipe and stall
+            if not proc.stderr:
+                return
+            while True:
+                data = _read1(proc.stderr, CHUNK)
+                if not data:
+                    return
+                tail.extend(data)
+                del tail[:-STDERR_TAIL]
+
+        drainer = threading.Thread(target=drain_stderr, daemon=True)
+        drainer.start()
+        pending = bytearray()
         while True:
-            chunk = proc.stdout.read(CHUNK) if proc.stdout else b""
-            if not chunk:
+            data = _read1(proc.stdout, CHUNK) if proc.stdout else b""
+            if not data:
                 break
-            with self._lock:
-                listeners = list(self._listeners)
-            for q in listeners:
-                try:
-                    q.put_nowait(chunk)
-                except queue.Full:
-                    try:
-                        q.get_nowait()            # drop the oldest: stay near live
-                        q.put_nowait(chunk)
-                    except (queue.Empty, queue.Full):
-                        pass
-        err = proc.stderr.read().decode("utf-8", "replace").strip() if proc.stderr else ""
+            pending.extend(data)
+            for item in _take_frames(pending):
+                with self._lock:
+                    listeners = list(owned)
+                for q in listeners:
+                    _offer(q, item)
+        drainer.join(timeout=1)
+        err = bytes(tail).decode("utf-8", "replace").strip()
         if err:
             log.warning("monitor encoder: %s", err.splitlines()[-1])
         with self._lock:
-            for q in self._listeners:
-                try:
-                    q.put_nowait(None)
-                except queue.Full:
-                    pass
+            for q in owned:
+                q.put_nowait(None)                # queues are unbounded: never Full
 
     def _wire(self, proc):
         """
