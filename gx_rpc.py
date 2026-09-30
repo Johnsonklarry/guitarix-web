@@ -202,8 +202,14 @@ class GuitarixRPC:
         return reply.get("result")
 
     def _read_loop(self):
+        # Capture the socket once: _close() (another thread) sets self._sock to
+        # None, and a closed socket then surfaces as OSError, which _supervise
+        # already handles, instead of AttributeError on None.
+        sock = self._sock
+        if sock is None:
+            raise OSError("not connected to guitarix")
         while not self._stop.is_set():
-            chunk = self._sock.recv(65536)
+            chunk = sock.recv(65536)
             if not chunk:
                 raise OSError("guitarix closed the connection")
             self._buf += chunk
