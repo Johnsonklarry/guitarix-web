@@ -12,6 +12,7 @@ Run it:
     python3 app.py
 """
 
+import contextvars
 import logging
 import mimetypes
 import os
@@ -134,6 +135,41 @@ def _broadcast_guarded_emit(event, data=None, *a, **kw):
 
 
 socketio.emit = _broadcast_guarded_emit
+
+# op_done has to reach the browser that started the operation, not every
+# connected client. A socket handler knows its client (request.sid), but the
+# background tasks it spawns run outside the request, so the spawner's sid is
+# captured here and restored inside the task.
+_op_sid = contextvars.ContextVar("op_sid", default=None)
+
+
+def _requester():
+    """The socket id of the client whose request we are serving, or None."""
+    sid = _op_sid.get()
+    if sid:
+        return sid
+    try:
+        return getattr(request, "sid", None)
+    except RuntimeError:              # no request context (startup, tests)
+        return None
+
+
+_socketio_start_task = socketio.start_background_task
+
+
+def _start_task_for_requester(target, *args, **kwargs):
+    sid = _requester()
+
+    def run(*a, **kw):
+        token = _op_sid.set(sid)
+        try:
+            return target(*a, **kw)
+        finally:
+            _op_sid.reset(token)
+    return _socketio_start_task(run, *args, **kwargs)
+
+
+socketio.start_background_task = _start_task_for_requester
 
 
 class AmpState:
@@ -278,7 +314,12 @@ def _export_request_cancel():
 def done(op, ok):
     """Tell the browser that started `op` it has finished, so its button settles."""
     if op:
-        socketio.emit("op_done", {"op": op, "ok": bool(ok)})
+        payload = {"op": op, "ok": bool(ok)}
+        sid = _requester()
+        if sid:
+            socketio.emit("op_done", payload, to=sid)
+        else:                         # no known requester: nobody to single out
+            socketio.emit("op_done", payload)
 
 
 def set_dirty(value):
