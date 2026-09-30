@@ -164,7 +164,8 @@ def on_disconnect():
 @socketio.on("ping2")
 def on_ping(msg):
     """Round trip, so the page can line its clock up with ours."""
-    return {"client": (msg or {}).get("t"), "server": now_ms()}
+    client = msg.get("t") if isinstance(msg, dict) else None
+    return {"client": client, "server": now_ms()}
 
 
 PAGE = """<!doctype html>
