@@ -281,8 +281,10 @@ class GuitarixRPC:
         params = []
         for pid, value in changes.items():
             params.extend([pid, value])
-            self.values[pid] = value
+        # Send first: if the transmission raises, the engine never saw the
+        # change, so the local cache must not claim it did.
         self.notify("set", params)
+        self.values.update(changes)
 
     def banks(self):
         """[{'name': 'MyBank', 'presets': ['Clean', ...]}, ...]"""
