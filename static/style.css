@@ -2480,6 +2480,9 @@ input[type="checkbox"] { transition: filter .12s ease, transform .08s ease; }
 }
 
 
+/* Keyboard focus ring for the clickable Settings badge (role=button). */
+.takes__badge.is-action:focus-visible { outline: 2px solid var(--lamp); outline-offset: 2px; }
+
 /* ---------------------------------------------------------------- bank picker */
 
 /* Past a handful of banks, chips become a wall of pills. A labelled dropdown
