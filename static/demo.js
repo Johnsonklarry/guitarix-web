@@ -362,6 +362,11 @@ const DEMO = (function () {
       }
       pushTakes(); toast('Renamed to ' + m.new + '.wav'); done(m);
     },
+    rec_delete_many: function (m) {
+      const gone = m.names || [];
+      takes = takes.filter(function (t) { return gone.indexOf(t.name) < 0; });
+      pushTakes(); toast('Deleted ' + gone.length); done(m);
+    },
     rec_delete: function (m) { takes = takes.filter(function (t) { return t.name !== m.name; }); pushTakes(); toast('Deleted'); done(m); },
 
     reamp_start: function (m) {

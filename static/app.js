@@ -1100,6 +1100,7 @@ function applyRec(status) {
 let knownTakes = null;          // names from the last render, to spot new ones
 
 let lastTakes = [];
+const selectedTakes = new Set();    // take names ticked for "Delete selected"
 let takeRows = {};          // take name -> its row and the buttons whose state changes
 
 function renderTakes(items) {
@@ -1118,9 +1119,74 @@ function renderTakes(items) {
   const seen = knownTakes;
   knownTakes = {};
   if (!items || !items.length) {
+    selectedTakes.clear();
     els.takes.innerHTML = '<p class="empty">No takes yet. Press Record and play.</p>';
     return;
   }
+
+  // Bulk delete: tick takes, then "Delete selected". Ticks survive a re-render
+  // (another device changing the list), but only for takes that still exist.
+  const eligible = lastTakes.filter(function (t) { return !t.active; });
+  Array.from(selectedTakes).forEach(function (n) {
+    if (!eligible.some(function (t) { return t.name === n; })) selectedTakes.delete(n);
+  });
+  const boxes = [];
+  const bulk = document.createElement('div');
+  bulk.className = 'takes__bulk';
+  const bulkCount = document.createElement('span');
+  bulkCount.className = 'takes__bulk-count';
+  const selectAll = mini('Select all', function () {
+    const every = eligible.length > 0 && selectedTakes.size === eligible.length;
+    boxes.forEach(function (b) {
+      b.input.checked = !every;
+      if (b.input.checked) selectedTakes.add(b.name); else selectedTakes.delete(b.name);
+    });
+    updateBulk();
+  });
+  const deleteSelected = mini('Delete selected', function () {
+    const names = Array.from(selectedTakes);
+    if (!names.length) return;
+    const shown = names.slice(0, 5).join(', ') +
+      (names.length > 5 ? ' and ' + (names.length - 5) + ' more' : '');
+    ask({ title: 'Delete ' + plural(names.length, 'take', 'takes') + '?',
+          label: 'Type DELETE to confirm', value: '', note: shown,
+          ok: 'Delete ' + names.length, danger: true })
+      .then(function (r) {
+        if (!r) return;
+        if (r.value.trim().toUpperCase() !== 'DELETE') {
+          showToast('Not deleted: type DELETE to confirm.', 'error');
+          return;
+        }
+        // the list pushed back by the server removes the rows (and the free-space
+        // readout in the header updates with it)
+        run('rec_delete_many', { names: names }, deleteSelected);
+      });
+  }, 'is-danger');
+  function updateBulk() {
+    bulk.hidden = !eligible.length;
+    bulkCount.textContent = selectedTakes.size ? selectedTakes.size + ' selected' : '';
+    deleteSelected.disabled = !selectedTakes.size;
+    selectAll.textContent = eligible.length && selectedTakes.size === eligible.length
+      ? 'Select none' : 'Select all';
+  }
+  function takeCheckbox(item) {
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'takes__check';
+    input.checked = selectedTakes.has(item.name);
+    input.setAttribute('aria-label', 'Select ' + item.name);
+    input.addEventListener('change', function () {
+      if (input.checked) selectedTakes.add(item.name); else selectedTakes.delete(item.name);
+      updateBulk();
+    });
+    boxes.push({ name: item.name, input: input });
+    return input;
+  }
+  bulk.appendChild(selectAll);
+  bulk.appendChild(deleteSelected);
+  bulk.appendChild(bulkCount);
+  els.takes.appendChild(bulk);
+  updateBulk();
 
   const table = document.createElement('table');
   table.className = 'takes__table';
@@ -1135,7 +1201,9 @@ function renderTakes(items) {
     tr.className = (item.active ? 'is-live' : '') + (seen && !seen[item.name] ? ' is-new' : '');
     knownTakes[item.name] = true;
 
-    tr.appendChild(takeNameCell(item));
+    const nameTd = takeNameCell(item);
+    if (!item.active) nameTd.insertBefore(takeCheckbox(item), nameTd.firstChild);
+    tr.appendChild(nameTd);
     tr.appendChild(cell(when(item.modified)));
     tr.appendChild(cell(item.active ? 'recording' : clock(item.duration)));
     tr.appendChild(cell(bytes(item.size)));
