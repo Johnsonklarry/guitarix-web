@@ -379,7 +379,8 @@
 <script>window.GX_DEMO_ONLY = {{ 'true' if demo_only else 'false' }}; window.GX_DEMO_CLIP = "{{ asset('demo/jam.mp3') }}";</script>
 <script src="{{ asset('demo.js') }}"></script>
 {% else %}
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="{{ asset('socket.io.min.js') }}"></script>
+<script>window.io || document.write('<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"><\/script>');</script>
 {% endif %}
 <script src="{{ asset('app.js') }}"></script>
 </body>

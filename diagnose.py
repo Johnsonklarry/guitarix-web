@@ -230,7 +230,7 @@ def check_serving(r):
     r.add(OK if vendored else WARN, "socket.io client",
           "served locally" if vendored else "loaded from a CDN",
           "" if vendored else "a device with no internet can't connect; download "
-                              "socket.io.min.js into static/ and point the script tag at it")
+                              "socket.io.min.js into static/ with tools/vendor_socketio.py")
     r.add(OK if os.environ.get("GX_SECRET_KEY") else OK, "secret key",
           "set from the environment" if os.environ.get("GX_SECRET_KEY")
           else "random each start (fine -- nothing needs to outlive a restart)")
