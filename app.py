@@ -1265,9 +1265,11 @@ def client_record_start(msg=None):
 
 def _reamp_call(fn, op=None, fail="Couldn't do that"):
     try:
-        fn()
+        if fn() is False:
+            raise BackingError("the player wouldn't accept the command")
     except (ReampError, BackingError, OSError) as exc:
         toast("%s: %s" % (fail, exc), "error")
+        socketio.emit("rec", rec_payload())
         return done(op, False)
     socketio.emit("rec", rec_payload())
     done(op, True)
@@ -1496,7 +1498,21 @@ def client_backing_pause(msg):
 
 @socketio.on("backing_volume")
 def client_backing_volume(msg):
-    backing.player.set_volume(int((msg or {}).get("volume", 80)))
+    msg = msg or {}
+
+    def set_volume():
+        raw = msg.get("volume", 80)
+        try:
+            if isinstance(raw, bool) or not isinstance(raw, (int, str)):
+                raise ValueError
+            volume = int(raw)
+            if not 0 <= volume <= 100:
+                raise ValueError
+        except ValueError:
+            raise BackingError("invalid volume")
+        return backing.player.set_volume(volume)
+
+    _reamp_call(set_volume, msg.get("op"), "Couldn't change volume")
 
 
 @socketio.on("backing_loop")
