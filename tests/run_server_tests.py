@@ -335,6 +335,48 @@ def _():
         check(guitar() == before, "guitar not back after cancel at %.1fs" % delay)
 
 
+@step("export: concurrent starts claim the job once, and cancel with no job is a no-op")
+def _():
+    import threading
+    from unittest import mock
+    # A slow or failed earlier scenario can leave its export job (and rig state)
+    # behind, which would make every start here bail out early. Let it finish,
+    # then start from a clean slate.
+    for _ in range(300):
+        if not A._export_job():
+            break
+        time.sleep(0.1)
+    A._export.update(job=None, cancel=False)
+    started, n = [], 6
+    barrier = threading.Barrier(n)
+    # widen the window between the "already running?" check and the claim
+    slow_active = property(lambda self: (time.sleep(0.05), False)[1])
+    not_recording = property(lambda self: False)
+    A.socketio.emitted.clear()
+    with mock.patch.object(type(A.reamp), "active", slow_active), \
+            mock.patch.object(type(A.rec), "recording", not_recording), \
+            mock.patch.object(A.state, "audition", None), \
+            mock.patch.object(A.socketio, "start_background_task",
+                              side_effect=lambda fn, *a, **k: started.append(fn)):
+        def go():
+            barrier.wait()
+            H["export_start"]({"take": "t.wav", "dry": "t.dry.wav", "source": "live"})
+        threads = [threading.Thread(target=go) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        try:
+            check(len(started) == 1,
+                  "%d exports were started at once (toasts: %s)" % (len(started), toasts()))
+            check(toasts().count("An export is already running.") == n - 1,
+                  "the losers weren't told: %s" % toasts())
+        finally:
+            A._export.update(job=None, cancel=False)
+    H["export_cancel"]({})
+    check(A._export["cancel"] is False, "cancel with no job left a stale flag")
+
+
 @step("monitor: streams MP3 to a listener, and stops encoding when they leave")
 def _():
     with A.app.test_client() as c:
