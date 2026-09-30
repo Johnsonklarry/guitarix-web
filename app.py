@@ -934,14 +934,20 @@ def _load_base_and_plan(preset, base, params, others_off):
     return changes, report
 
 
+_bank_lock = threading.Lock()
+
+
 def _ensure_bank(bank):
-    if bank in _banks_map():
-        return
-    if not gx_rpc.PRESET_METHODS.get("new_bank"):
-        raise RpcError("There's no bank called %s, and this build can't create banks "
-                       "from here. Choose an existing bank." % bank)
-    rpc.bank_create(bank)
-    _wait_for(lambda m: bank in m, "Couldn't create the bank %s." % bank)
+    # check-then-create must be one step: two imports racing for the same
+    # new bank would otherwise both see it missing and both create it
+    with _bank_lock:
+        if bank in _banks_map():
+            return
+        if not gx_rpc.PRESET_METHODS.get("new_bank"):
+            raise RpcError("There's no bank called %s, and this build can't create banks "
+                           "from here. Choose an existing bank." % bank)
+        rpc.bank_create(bank)
+        _wait_for(lambda m: bank in m, "Couldn't create the bank %s." % bank)
 
 
 def _apply(changes):
