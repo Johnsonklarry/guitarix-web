@@ -101,7 +101,13 @@ def wire(source):
 
 
 def pump_jack(source):
-    proc = subprocess.Popen(ffmpeg_pcm(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.Popen(ffmpeg_pcm(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as e:
+        state["proc"] = None
+        state["wired"] = "ffmpeg could not start: %s" % e
+        print(state["wired"])
+        return
     state["proc"] = proc
     threading.Thread(target=wire, args=(source,), daemon=True).start()
     seq = 0
