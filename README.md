@@ -16,7 +16,7 @@ change to every open browser, so a phone and a laptop stay in step.
 - **Getting started:** [Quick start](#quick-start), [Checking it works](#checking-it-works)
 - **Using it:** [Two layouts](#two-layouts), [Live mode](#live-mode), [Saving and creating presets](#saving-and-creating-presets), [Importing presets](#importing-presets), [Recording, reamping and backing tracks](#recording-reamping-and-backing-tracks), [On a phone: installing it as an app](#on-a-phone-installing-it-as-an-app), [Demo mode](#demo-mode), [Broadcast mode](#broadcast-mode)
 - **Tuning the controls:** [Adding controls](#adding-controls), [Taming a plugin with too many parameters](#taming-a-plugin-with-too-many-parameters), [Cryptic parameter names](#cryptic-parameter-names)
-- **How it works:** [How the sync works](#how-the-sync-works), [When the engine goes quiet mid-operation](#when-the-engine-goes-quiet-mid-operation)
+- **How it works:** [How the sync works](#how-the-sync-works), [When the engine goes quiet mid-operation](#when-the-engine-goes-quiet-mid-operation), [Running under gunicorn](#running-under-gunicorn)
 - **When something's wrong:** [Empty presets, empty EQ, empty effects](#empty-presets-empty-eq-empty-effects), [Loose ends](#loose-ends)
 
 ## Files
@@ -26,6 +26,7 @@ Run it
   README.md               this file
   app.py                  the web app: routes, live connection, state, every action
   requirements.txt        Python packages (the apt ones are listed inside)
+  wsgi.py                 the gunicorn entry point
   guitarix-web.service    start at boot, as a systemd system service
   guitarix-demo.service   the demo-only copy, safe to port-forward
 
@@ -78,6 +79,8 @@ sudo apt install ffmpeg mpv jackd2
 pip install -r requirements.txt
 guitarix -N -p 7000        # or with its window: guitarix -p 7000
 python3 app.py             # then open http://<pi>:5000
+# or, under gunicorn (see "Running under gunicorn"):
+# gunicorn -k gthread -w 1 --threads 100 -b 0.0.0.0:5000 wsgi:app
 ```
 
 To have it start at boot, see `guitarix-web.service` -- it's a system service, with the
@@ -636,6 +639,25 @@ python3 dump_params.py                 # can this machine reach it?
 `GX_HOST` and `GX_PORT` at the top of `app.py` are where it tries. The app
 reconnects on its own once the engine answers -- no restart needed.
 
+## Running under gunicorn
+
+Werkzeug's development server is fine on a LAN. To serve with gunicorn instead:
+
+```bash
+pip install -r requirements.txt     # includes gunicorn and simple-websocket
+gunicorn -k gthread -w 1 --threads 100 -b 0.0.0.0:5000 wsgi:app
+```
+
+Use `wsgi:app`, not `app:app`: gunicorn never runs the `python3 app.py` start-up
+code, and `wsgi.py` is what starts the guitarix connection and the background
+loops. Keep `-w 1` -- the guitarix link, the recorder and the Socket.IO sessions
+live inside one process. The app runs Flask-SocketIO in threading mode, so the
+worker is `gthread` (real threads, real websockets through simple-websocket)
+rather than eventlet or gevent, which would need the whole app monkey-patched.
+The same flags work in `guitarix-web.service`; its header has the ExecStart
+line to swap in. gunicorn doesn't run on Windows, but the app does, via
+`python3 app.py`.
+
 ## Loose ends
 
 - **No login.** Anyone who can reach port 5000 can delete takes, overwrite
@@ -648,4 +670,4 @@ reconnects on its own once the engine answers -- no restart needed.
 - **Takes are never deleted for you.** The Record tab shows free space and turns
   amber under a gigabyte; about 11 MB a minute, twice that with **+ dry**.
 - **Werkzeug's development server** is fine on a LAN. For anything heavier, run
-  it under gunicorn with a websocket worker.
+  it under gunicorn -- see **Running under gunicorn**.

@@ -2,6 +2,7 @@
 flask>=2.3
 flask-socketio>=5.3
 simple-websocket>=1.0      # real websockets; without it Socket.IO falls back to slower polling
+gunicorn>=21.2             # optional production server: see README "Running under gunicorn"
 
 # System side (apt), not pip:
 #   ffmpeg   recording, the Listen stream, MP3 exports  (needs libmp3lame: ffmpeg -encoders | grep mp3)
