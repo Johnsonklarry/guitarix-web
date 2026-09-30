@@ -44,7 +44,8 @@
 
 </main>
 
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="{{ asset('socket.io.min.js') }}"></script>
+<script>window.io || document.write('<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"><\/script>');</script>
 <script src="{{ asset('broadcast.js') }}"></script>
 </body>
 </html>
