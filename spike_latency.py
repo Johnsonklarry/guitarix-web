@@ -61,6 +61,9 @@ app.config["SECRET_KEY"] = "spike"
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
 state = {"listeners": 0, "source": None, "fake": False, "proc": None, "wired": None}
+# Socket.IO handlers run on separate threads (async_mode="threading"), so the
+# read-modify-write on state["listeners"] must be serialized by ONE shared lock.
+listeners_lock = threading.Lock()
 
 
 def now_ms():
@@ -150,7 +153,8 @@ def send(seq, buf):
 
 @socketio.on("connect")
 def on_connect():
-    state["listeners"] += 1
+    with listeners_lock:
+        state["listeners"] += 1
     socketio.emit("hello", {"rate": RATE, "channels": CHANNELS, "frames": FRAMES,
                             "source": state["source"], "fake": state["fake"],
                             "wired": state["wired"], "t": now_ms()})
@@ -158,7 +162,8 @@ def on_connect():
 
 @socketio.on("disconnect")
 def on_disconnect():
-    state["listeners"] = max(0, state["listeners"] - 1)
+    with listeners_lock:
+        state["listeners"] = max(0, state["listeners"] - 1)
 
 
 @socketio.on("ping2")
