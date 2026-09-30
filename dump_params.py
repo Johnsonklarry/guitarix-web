@@ -22,6 +22,7 @@ rpc = GuitarixRPC(on_ready=ready.set)
 rpc.start()
 
 if not ready.wait(timeout=10):
+    rpc.stop()
     sys.exit("could not reach guitarix on 127.0.0.1:7000 "
              "(is it running with -p 7000 ?)")
 
