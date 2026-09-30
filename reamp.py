@@ -86,21 +86,26 @@ class Reamp:
             for port, sources in saved.items():
                 for src in sources:
                     jackutil.disconnect(src, port)
-            self._session = {"take": take, "mode": mode, "record": bool(record),
-                             "output": None, "saved": saved, "amp_inputs": amp_inputs}
+            session = {"take": take, "mode": mode, "record": bool(record),
+                       "output": None, "saved": saved, "amp_inputs": amp_inputs}
+            self._session = session
 
         try:
             self.player.play(path, self._targets(mode), loop=bool(loop) and not record)
             if record:
-                status = self.rec.start(name=name or self._render_name(take))
-                if status.get("error"):
-                    raise ReampError(status["error"])
-                self._session["output"] = status.get("file")
+                with self._lock:
+                    if self._session is not session or session.get("finishing"):
+                        raise ReampError("playback ended before recording started")
+                    status = self.rec.start(name=name or self._render_name(take))
+                    if status.get("error"):
+                        raise ReampError(status["error"])
+                    session["output"] = status.get("file")
         except (PlayerError, ReampError, OSError) as exc:
             self.player.stop()
             self._finish()
             raise ReampError(str(exc))
         self.on_change()
+        return session["output"] if record else None
 
     def set_mode(self, mode):
         """Amp on ("wet") or off ("dry"), without stopping playback."""
