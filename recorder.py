@@ -102,7 +102,10 @@ class Recorder:
 
     @property
     def recording(self):
-        return self._proc is not None and self._proc.poll() is None
+        # Read _proc once: the ticker calls this without the lock while
+        # stop() can clear it, so a second read could see None and crash.
+        proc = self._proc
+        return proc is not None and proc.poll() is None
 
     def status(self):
         return {
