@@ -153,6 +153,8 @@ class AmpState:
         self.audition = None      # an imported preset being tried out, unsaved
 
     def public_audition(self):
+        # Caller must hold self.lock (snapshot() and client_audition() both do).
+        # It is a plain, non-reentrant Lock, so taking it here would deadlock.
         a = self.audition
         if not a or "name" not in a:
             return None
