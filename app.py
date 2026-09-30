@@ -1409,8 +1409,8 @@ def client_export_start(msg):
                 rpc.set_preset(*base)
             time.sleep(0.6)                        # let the settings land before playing
 
-            reamp.start(take, dry, record=True, name="%s (%s)" % (stem, tag))
-            out = (reamp.status() or {}).get("output")
+            if not _export_cancelled():
+                out = reamp.start(take, dry, record=True, name="%s (%s)" % (stem, tag))
             length = next((t["duration"] for t in rec.listing() if t["name"] == take), None) or 600
             deadline = time.time() + length + 30
             while reamp.active and time.time() < deadline:
