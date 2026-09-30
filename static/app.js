@@ -400,7 +400,23 @@ function renderPresets() {
 
 /* ------------------------------------------------------------------ knobs */
 
+/* Rebuilding a container throws its controls away. Forget the ones inside it,
+   or the sliders/readouts/switches/selects maps keep the detached nodes (and
+   their listeners) alive, and a glide frame can keep running on a dead slider. */
+function releaseControls(into) {
+  [sliders, readouts, switches, selects].forEach(function (map) {
+    Object.keys(map).forEach(function (id) {
+      const el = map[id];
+      if (!el || !into.contains(el)) return;
+      if (el._glide) { cancelAnimationFrame(el._glide); el._glide = null; }
+      if (map === sliders) dragging.delete(id);
+      delete map[id];
+    });
+  });
+}
+
 function renderGroups(into, groups) {
+  releaseControls(into);
   into.innerHTML = '';
   if (!groups.length) {
     into.innerHTML = '<p class="empty">' + emptyText(
