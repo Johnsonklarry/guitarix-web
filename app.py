@@ -12,6 +12,7 @@ Run it:
     python3 app.py
 """
 
+import json
 import logging
 import mimetypes
 import os
@@ -63,6 +64,16 @@ DEMO_ONLY = os.environ.get("GX_DEMO_ONLY", "").lower() in ("1", "true", "yes")
 # could change the rig. Nothing is registered that could.
 BROADCAST = os.environ.get("GX_BROADCAST", "").lower() in ("1", "true", "yes")
 FLUSH_INTERVAL = 0.05     # seconds; coalesces slider storms into ~20 fps
+
+# GX_REC_FEED is the one-way state feed from the Studio process to the
+# broadcast process (guitarix-broadcast.service is a second app.py with its own
+# Recorder, which never records). Point both at the same path: Studio writes a
+# small JSON file there, broadcast only reads it and publishes recording/count.
+# Recording is true only while the feed SAYS so and is fresh; Studio refreshes
+# it every second while a take rolls, so a crashed Studio stops reading as
+# "recording" after REC_FEED_STALE seconds. File existence proves nothing.
+REC_FEED = os.environ.get("GX_REC_FEED", "")
+REC_FEED_STALE = 5.0      # seconds
 
 # Python doesn't know the manifest's extension, and would serve it as a
 # generic binary download.
@@ -207,10 +218,67 @@ def rec_payload():
     status["reamp_error"] = reamp.restore_error
     status["backing"] = backing.status()
     status["export"] = _export_job()
+    if BROADCAST and REC_FEED:
+        # This process never records; Studio does. Take its word, not ours.
+        feed = read_rec_feed() or {}
+        status["recording"] = bool(feed.get("recording"))
+        if feed.get("count") is not None:
+            status["count"] = feed["count"]
     return status
 
 
+_feed_last = None
+
+
+def publish_rec_feed():
+    """
+    Studio side: write the approved fields (recording, count, a timestamp) for
+    the broadcast process. Atomic replace, so a reader never sees half a file.
+    No filenames, no controls. Unchanged idle state is not rewritten; a
+    rolling take is, every call, as the heartbeat.
+    """
+    global _feed_last
+    if not REC_FEED or BROADCAST:
+        return
+    recording, count = rec.recording, rec.take_count()
+    if not recording and (recording, count) == _feed_last:
+        return
+    doc = {"recording": recording, "count": count, "at": time.time()}
+    tmp = REC_FEED + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        os.replace(tmp, REC_FEED)
+    except OSError:
+        log.warning("couldn't write the recording feed %s", REC_FEED)
+        return
+    _feed_last = (recording, count)
+
+
+def read_rec_feed(path=None, now=None):
+    """
+    Broadcast side: {"recording": bool, "count": int|None} from the feed, or
+    None when it is missing or unreadable. Only those two fields survive;
+    anything else in the file is ignored. Recording needs a literal true AND a
+    fresh timestamp.
+    """
+    path = path or REC_FEED
+    now = time.time() if now is None else now
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        at = float(doc["at"])
+        recording = doc.get("recording") is True and abs(now - at) <= REC_FEED_STALE
+        count = doc.get("count")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        count = None
+    return {"recording": recording, "count": count}
+
+
 def push_recordings():
+    publish_rec_feed()
     socketio.emit("recordings", {"rec": rec_payload(), "items": rec.listing(),
                                  "backing_items": backing.listing()})
 
@@ -295,10 +363,19 @@ def toast(text, kind="info"):
 
 def ticker():
     """While a take is running or rendering, keep the clock honest."""
+    last_view = None
     while True:
         socketio.sleep(1)
-        if rec.recording or reamp.active or backing.player.playing:
+        if BROADCAST and REC_FEED:
+            # Studio owns the take: follow its feed, push only what changed.
+            payload = rec_payload()
+            view = (payload["recording"], payload["count"])
+            if view != last_view:
+                last_view = view
+                socketio.emit("rec", payload)
+        elif rec.recording or reamp.active or backing.player.playing:
             socketio.emit("rec", rec_payload())
+        publish_rec_feed()
 
 # changes waiting to be pushed to browsers
 _pending = {}
