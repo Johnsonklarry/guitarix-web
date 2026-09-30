@@ -957,6 +957,13 @@ def _resync():
         log.exception("resync failed")
 
 
+# One import_audition at a time: the "is this the first audition?" check, the
+# snapshot of what was playing, and installing state.audition must not
+# interleave between two operations (the second would snapshot settings the
+# first had already changed, and Discard would restore the wrong sound).
+_audition_op_lock = threading.Lock()
+
+
 def _end_audition():
     with state.lock:
         state.audition = None
@@ -1014,7 +1021,7 @@ def client_import_audition(msg):
     msg = msg or {}
     op = msg.get("op")
 
-    def run():
+    def attempt():
         try:
             preset, base, params, others_off, bank = _prepare_one(msg)
             with state.lock:
@@ -1043,6 +1050,10 @@ def client_import_audition(msg):
         _resync()
         socketio.emit("audition", public)
         done(op, True)
+
+    def run():
+        with _audition_op_lock:
+            attempt()
 
     socketio.start_background_task(run)
 
