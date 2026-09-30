@@ -79,6 +79,22 @@ def _extract_json(text):
     starts = [i for i in (stripped.find("{"), stripped.find("[")) if i >= 0]
     if not starts:
         return stripped
+    # Try each opening bracket in turn and let the JSON decoder find where a
+    # balanced value ends, so "{...} and then ]" or a stray "[" in the prose
+    # can't be glued into an invalid span.
+    decoder = json.JSONDecoder()
+    tried = 0
+    for i, ch in enumerate(stripped):
+        if ch not in "{[":
+            continue
+        try:
+            _, length = decoder.raw_decode(stripped[i:])
+            return stripped[i:i + length]
+        except ValueError:
+            tried += 1
+            if tried >= 200:
+                break
+    # Nothing decodes: keep the old widest span so the error message points at it.
     start = min(starts)
     end = max(stripped.rfind("}"), stripped.rfind("]"))
     return stripped[start:end + 1] if end > start else stripped
