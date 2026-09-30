@@ -16,6 +16,10 @@
 <!-- the status bar floats over the page; the safe-area padding keeps it clear -->
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Guitarix</title>
+<!-- Shared theme kit: Fireside by default, OLED switch in the header -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya:wght@400;600&amp;family=Barlow+Condensed:wght@500;600&amp;family=Cormorant+Garamond:wght@500;600&amp;family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;600&amp;display=swap">
+<link rel="stylesheet" href="{{ asset('theme-kit/themes.css') }}">
+<script src="{{ asset('theme-kit/theme.js') }}"></script>
 <link rel="stylesheet" href="{{ asset('style.css') }}">
 </head>
 
@@ -40,6 +44,8 @@
           <span class="listen__lamp" aria-hidden="true"></span>
           <span id="listen-label">Listen</span>
         </button>
+        <div class="theme-switch" id="theme-switch"></div>
+        <script>if (window.ThemeKit) ThemeKit.mountSwitcher(document.getElementById('theme-switch'));</script>
       </div>
     </header>
 

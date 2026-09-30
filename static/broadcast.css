@@ -31,7 +31,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border: 1px solid #2a2420;
+  border: 1px solid var(--edge);
   border-radius: var(--r-md);
   overflow: hidden;
 }
@@ -40,7 +40,7 @@ body {
 
 .panel {
   padding: 16px 20px;
-  background: linear-gradient(180deg, #322b25 0%, #221d19 100%);
+  background: linear-gradient(180deg, var(--panel-hi) 0%, var(--panel) 100%);
   border-bottom: 1px solid #000;
   box-shadow: 0 1px 0 rgba(255,255,255,.06) inset;
 }
@@ -85,7 +85,7 @@ body {
   display: flex;
   flex-direction: column;
   padding: clamp(14px, 3.5vw, 22px);
-  background-color: #191512;
+  background-color: var(--bg);
   background-image:
     repeating-linear-gradient(45deg,  rgba(255,255,255,.022) 0 1px, transparent 1px 4px),
     repeating-linear-gradient(-45deg, rgba(0,0,0,.30)        0 1px, transparent 1px 4px);
@@ -208,7 +208,7 @@ body {
 
 .chassis {
   padding: 11px 20px;
-  background: linear-gradient(180deg, #100d0b 0%, #080706 100%);
+  background: var(--bg);
   border-top: 1px solid #000;
   box-shadow: 0 1px 0 rgba(255,255,255,.05) inset;
   display: flex;
@@ -216,7 +216,7 @@ body {
   gap: 12px;
   font-size: .68rem;
   letter-spacing: .14em;
-  color: #857a70;
+  color: var(--muted);
 }
 
 /* ---------------------------------------------------------------- responsive */

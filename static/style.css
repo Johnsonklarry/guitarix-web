@@ -1,25 +1,26 @@
 :root {
-  --tolex:      #151210;
-  --tolex-deep: #0b0908;
-  --panel:      #241f1b;
-  --panel-hi:   #2e2822;
-  --panel-press:#1c1815;
-  --edge:       #3b322a;
-  --edge-hi:    #5c4f42;
-  --cream:      #e7ddc9;
-  --muted:      #9a8e83;      /* 4.8:1 or better on every surface it sits on */
-  --lamp:       #ff9b2f;
-  --lamp-dim:   #6b4418;
-  --lamp-glow:  rgba(255,155,47,.40);
-  --fault:      #d0453c;
+  /* The old amp-panel names now point at the shared theme kit (themes.css), so
+     every rule below follows the chosen theme and its OLED variant. The kit's own
+     --edge and --fault are used as they are. */
+  --tolex:      var(--surface);
+  --tolex-deep: var(--bg);
+  --panel:      var(--surface-2);
+  --panel-hi:   var(--surface-3);
+  --panel-press:var(--bg);
+  --edge-hi:    var(--edge-strong);
+  --cream:      var(--text);
+  --muted:      var(--text-muted);
+  --lamp:       var(--accent);
+  --lamp-dim:   var(--idle);
+  --lamp-glow:  var(--accent-glow);
 
   /* Shape and spacing, chosen once. Before this there were fourteen corner
      radii and twenty-five padding values in here, which is what made
      controls look randomly assembled rather than part of one machine. */
   --r-xs:   4px;      /* slots and tracks */
-  --r-sm:   6px;      /* buttons, fields, small controls */
-  --r-md:  10px;      /* cards, panels, groups */
-  --r-lg:  14px;      /* the cabinet, dialogs, pads */
+  --r-sm:  var(--radius-sm);   /* buttons, fields, small controls */
+  --r-md:  var(--radius-md);   /* cards, panels, groups */
+  --r-lg:  var(--radius-lg);   /* the cabinet, dialogs, pads */
   --r-pill: 999px;    /* chips and switches */
 
   --sp-1:  4px;
@@ -37,6 +38,57 @@
   --pad-card:  14px;          /* cards and group bodies */
 }
 
+/* Light theme: the cabinet stays a dark amp panel on a light backdrop, because
+   many rules below use fixed dark surfaces. */
+html[data-theme="light"]:not([data-oled="true"]) {
+  --tolex: #151210;  --tolex-deep: #0b0908;
+  --panel: #241f1b;  --panel-hi: #2e2822;  --panel-press: #1c1815;
+  --edge-hi: #5c4f42;  --cream: #e7ddc9;  --muted: #9a8e83;
+  --lamp: #ff9b2f;  --lamp-dim: #6b4418;  --lamp-glow: rgba(255,155,47,.40);
+}
+
+/* OLED: pure black surfaces, hairline edges, accents only. Lit states (lamps,
+   the fault reds, the accent borders) stay. */
+html[data-oled="true"] :is(.cab, .cab__inner, .panel, .alert, .tabs, .tab.is-current,
+  .grille, .bank, .preset, .group, .group__head, .switch, .choice, .chassis, .act,
+  .mini, .listen, .audition, .toast, .importer, .ask, .pad, .rec-btn, .reampbar,
+  .imp-card, .live, .live__tile, .demo-bar, .status) {
+  background: var(--bg);
+  border-color: var(--edge);
+  box-shadow: none;
+}
+html[data-oled="true"] :is(.preset.is-active, .bank.is-current, .switch.is-on, .act.is-on,
+  .act.is-primary, .pad.is-on, .listen.is-on, .toast.is-ok) {
+  border-color: var(--accent);
+}
+html[data-oled="true"] :is(.alert, .toast.is-error, .rec-btn.is-live, .pad.is-rec.is-live) {
+  border-color: var(--fault);
+}
+
+/* Theme picker in the header: touch-sized, 16px so phones never zoom */
+.theme-switch > div { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.theme-switch label {
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.theme-switch select, .theme-switch button {
+  min-height: var(--tap-min, 44px);
+  padding: var(--pad-chip);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--cream);
+  font: inherit;
+  font-size: var(--text-base, 16px);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.theme-switch button[aria-pressed="true"] { border-color: var(--lamp); color: var(--lamp); }
+.theme-switch select:focus-visible, .theme-switch button:focus-visible { outline: 2px solid var(--lamp); outline-offset: 2px; }
+
 * { box-sizing: border-box; }
 
 /* The hidden attribute is only a UA-level `display: none`, so any class rule
@@ -50,32 +102,31 @@
 html {
   height: 100%;
   -webkit-text-size-adjust: 100%;
-  background-color: #0b0908;
-  color-scheme: dark;            /* dark native controls and browser UI */
+  background-color: var(--bg);   /* color-scheme comes from the theme kit */
 }
 
 body {
-  --edge: clamp(10px, 2.5vw, 32px);
+  --gutter: clamp(10px, 2.5vw, 32px);   /* was --edge, which shadowed the kit's edge colour */
   margin: 0;
   height: 100%;
   min-height: 100dvh;
-  background-color: #0b0908;
+  background-color: var(--bg);
   /* Launched from the home screen, the page runs edge to edge under the
      status bar and home indicator. The insets keep controls clear of both;
      in a normal browser tab they're zero and nothing changes. */
   padding:
-    max(var(--edge), env(safe-area-inset-top))
-    max(var(--edge), env(safe-area-inset-right))
-    max(var(--edge), env(safe-area-inset-bottom))
-    max(var(--edge), env(safe-area-inset-left));
+    max(var(--gutter), env(safe-area-inset-top))
+    max(var(--gutter), env(safe-area-inset-right))
+    max(var(--gutter), env(safe-area-inset-bottom))
+    max(var(--gutter), env(safe-area-inset-left));
   display: flex;
   align-items: stretch;      /* cabinet fills the window */
   justify-content: center;
   /* background-image, not the `background` shorthand: the shorthand would
      reset the background-color set above back to transparent */
-  background-image: radial-gradient(120% 80% at 50% -10%, #241e19 0%, var(--tolex) 55%, var(--tolex-deep) 100%);
+  background-image: radial-gradient(120% 80% at 50% -10%, var(--surface-2) 0%, var(--bg) 100%);
   color: var(--cream);
-  font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  font-family: var(--font-body), "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
   font-stretch: condensed;
   -webkit-font-smoothing: antialiased;
 }
@@ -115,7 +166,7 @@ body {
   gap: 16px;
   flex-wrap: wrap;
   padding: 16px 20px;
-  background: linear-gradient(180deg, #322b25 0%, #221d19 100%);
+  background: linear-gradient(180deg, var(--panel-hi) 0%, var(--panel) 100%);
   border-bottom: 1px solid #000;
   box-shadow: 0 1px 0 rgba(255,255,255,.06) inset;
 }
@@ -127,6 +178,7 @@ body {
   letter-spacing: .22em;
   text-transform: uppercase;
   text-shadow: 0 1px 0 #000;
+  font-family: var(--font-display), Georgia, serif;
 }
 
 .readout {
@@ -182,7 +234,7 @@ body {
 .tabs {
   flex: none;
   display: flex;
-  background: linear-gradient(180deg, #1d1915 0%, #141110 100%);
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg) 100%);
   border-bottom: 1px solid #000;
 }
 
@@ -232,7 +284,7 @@ body {
   display: flex;
   flex-direction: column;
   padding: clamp(14px, 3.5vw, 22px);
-  background-color: #191512;
+  background-color: var(--bg);
   background-image:
     repeating-linear-gradient(45deg,  rgba(255,255,255,.022) 0 1px, transparent 1px 4px),
     repeating-linear-gradient(-45deg, rgba(0,0,0,.30)        0 1px, transparent 1px 4px);
@@ -810,7 +862,7 @@ input[type="range"]:focus-visible::-moz-range-thumb {
 .chassis {
   flex: none;
   padding: 11px 20px;
-  background: linear-gradient(180deg, #100d0b 0%, #080706 100%);
+  background: var(--bg);
   border-top: 1px solid #000;
   box-shadow: 0 1px 0 rgba(255,255,255,.05) inset;
   display: flex;
@@ -818,7 +870,7 @@ input[type="range"]:focus-visible::-moz-range-thumb {
   gap: 12px;
   font-size: .68rem;
   letter-spacing: .14em;
-  color: #857a70;
+  color: var(--muted);
 }
 
 /* ---------------------------------------------------------------- offline */
@@ -2089,8 +2141,8 @@ dialog[open]::backdrop       { animation: fade-in .18s ease-out; }
   padding:
     max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right))
     max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
-  background-color: #0b0908;
-  background-image: radial-gradient(120% 80% at 50% -10%, #241e19 0%, var(--tolex) 55%, var(--tolex-deep) 100%);
+  background-color: var(--bg);
+  background-image: radial-gradient(120% 80% at 50% -10%, var(--surface-2) 0%, var(--bg) 100%);
   overflow-y: auto;
 }
 .live:not([hidden]) { animation: fade-in .18s ease-out; }
