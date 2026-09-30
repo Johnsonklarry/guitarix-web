@@ -1566,7 +1566,22 @@ def client_rec_delete(msg):
     done(op, True)
 
 
-if __name__ == "__main__":
+_services_started = False
+_services_lock = threading.Lock()
+
+
+def start_services():
+    """Start the guitarix connection and the background loops, once.
+
+    `python3 app.py` calls this itself. Under gunicorn `__main__` never runs,
+    so wsgi.py calls it instead: without it the page loads but nothing ever
+    connects to guitarix or pushes an update.
+    """
+    global _services_started
+    with _services_lock:
+        if _services_started:
+            return
+        _services_started = True
     if DEMO_ONLY:
         # nothing to connect to, nothing to record: just serve the demo
         log.info("demo only, on port %d -- guitarix is never contacted", WEB_PORT)
@@ -1574,4 +1589,7 @@ if __name__ == "__main__":
         rpc.start()
         socketio.start_background_task(flusher)
         socketio.start_background_task(ticker)
+# `python3 app.py` serves with Werkzeug; gunicorn imports wsgi.py instead.
+if __name__ == "__main__":
+    start_services()
     socketio.run(app, host="0.0.0.0", port=WEB_PORT, allow_unsafe_werkzeug=True)
