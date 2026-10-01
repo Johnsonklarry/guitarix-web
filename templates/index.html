@@ -27,10 +27,10 @@
 <main class="cab">
   <div class="cab__inner">
 
-    <header class="panel">
+    <header class="panel" id="app-header" data-region="header">
       <h1 class="wordmark">Guitarix</h1>
       <div class="panel__side">
-        <p class="readout">
+        <p class="readout" id="app-status" data-region="status">
           <span class="pilot" id="pilot" aria-hidden="true"></span>
           <span id="readout">Connecting to the amp</span>
         </p>
@@ -171,7 +171,7 @@
           </div>
         </div>
 
-        <div class="transport">
+        <div class="transport" id="transport-controls" data-region="transport-controls">
           <button class="rec-btn" id="btn-rec" type="button" aria-pressed="false">
             <span class="rec-btn__dot" aria-hidden="true"></span>
             <span id="rec-label">Record</span>
