@@ -18,17 +18,17 @@
 <body>
 <main class="stage">
 
-  <p class="lamp-row">
+  <p class="lamp-row" id="app-status" data-region="status">
     <span class="pilot" id="pilot" aria-hidden="true"></span>
     <span class="status" id="status">Connecting</span>
   </p>
 
-  <div class="now">
+  <div class="now" id="app-header" data-region="header">
     <p class="bank" id="bank"></p>
     <h1 class="preset" id="preset">&mdash;</h1>
   </div>
 
-  <p class="rolling" id="rolling" hidden role="status">
+  <p class="rolling" id="rolling" data-region="broadcast-status" hidden role="status">
     <span class="rolling__lamp" aria-hidden="true"></span>
     <span>Recording</span>
   </p>
@@ -38,7 +38,7 @@
   <!-- The stream is an ordinary <audio> element pointed at /monitor.mp3, the one
        route besides this page that a broadcast server answers. Controls are the
        browser's own: play, pause and volume, and nothing else exists to offer. -->
-  <div class="listen">
+  <div class="listen" id="transport-controls" data-region="transport-controls">
     <audio id="stream" preload="none" controls src="/monitor.mp3"></audio>
   </div>
 
