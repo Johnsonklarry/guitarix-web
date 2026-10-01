@@ -17,6 +17,8 @@ Wants=guitarix.service
 Type=simple
 User=ljohnson
 WorkingDirectory=/home/ljohnson/guitarix-web
+# To serve with gunicorn instead of Werkzeug, replace the ExecStart below with:
+#   ExecStart=/home/ljohnson/guitarix-web/.venv/bin/gunicorn -k gthread -w 1 --threads 100 -b 0.0.0.0:5000 wsgi:app
 ExecStart=/home/ljohnson/guitarix-web/.venv/bin/python /home/ljohnson/guitarix-web/app.py
 Environment=GX_PORT=7000
 Environment=GX_WEB_PORT=5000
