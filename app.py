@@ -1684,6 +1684,25 @@ def client_rec_delete(msg):
     done(op, True)
 
 
+@socketio.on("rec_delete_many")
+def client_rec_delete_many(msg):
+    op = (msg or {}).get("op")
+    names = (msg or {}).get("names")
+    if not isinstance(names, list) or not names:
+        toast("Couldn't delete: no takes were chosen", "error")
+        return done(op, False)
+    deleted, failed = rec.delete_many(names)
+    if failed and not deleted:
+        toast("Couldn't delete them: %s" % failed[0][1], "error")
+    elif failed:
+        toast("Deleted %d of %d takes; couldn't delete %s: %s"
+              % (len(deleted), len(deleted) + len(failed), failed[0][0], failed[0][1]),
+              "error")
+    else:
+        toast("Deleted %d take%s" % (len(deleted), "" if len(deleted) == 1 else "s"), "ok")
+    done(op, not failed)
+
+
 _services_started = False
 _services_lock = threading.Lock()
 

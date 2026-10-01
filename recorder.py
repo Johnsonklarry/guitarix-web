@@ -412,6 +412,10 @@ class Recorder:
         return os.path.basename(target)
 
     def delete(self, name):
+        self._remove(name)
+        self.on_change()
+
+    def _remove(self, name):
         path = self._resolve(name)
         if not path:
             raise FileNotFoundError(name)
@@ -426,4 +430,29 @@ class Recorder:
                     os.remove(extra)
                 except OSError:
                     log.warning("deleted %s but couldn't remove %s", name, extra)
-        self.on_change()
+
+    def delete_many(self, names):
+        """
+        Delete several takes (each with its dry twin and settings) and tell the
+        clients once. Every name goes through the same containment check as a
+        single delete (_resolve), so nothing outside the recordings folder can
+        be reached. One bad entry doesn't stop the rest.
+
+        Returns (deleted, failed): names that went, and (name, reason) pairs.
+        """
+        deleted, failed, seen = [], [], set()
+        for name in names:
+            if not isinstance(name, str) or name in seen:
+                continue
+            seen.add(name)
+            try:
+                self._remove(name)
+            except FileNotFoundError:
+                failed.append((name, "not found"))
+            except (RuntimeError, OSError) as exc:
+                failed.append((name, str(exc)))
+            else:
+                deleted.append(name)
+        if deleted:
+            self.on_change()
+        return deleted, failed
