@@ -32,6 +32,15 @@ else
   git pull --ff-only
 fi
 
+# (2) Re‑check for uncommitted changes after pulling to avoid race conditions
+status=$(git status --porcelain)
+if [ -n "$status" ]; then
+  echo "ERROR: Working directory became dirty after pull. Aborting." >&2
+  echo "Dirty files:" >&2
+  echo "$status" >&2
+  exit 1
+fi
+
 # What actually arrived -- before..HEAD, not "the last ten whatever they are"
 after=$(git rev-parse HEAD)
 if [ "$before" = "$after" ]; then
