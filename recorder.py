@@ -119,6 +119,7 @@ class Recorder:
             "dry_available": bool(self._jack_ports(DRY_CLIENT, "output", DRY_PORTS)),
             "next_attempt": self.next_attempt(),
             "free_bytes": self._free_bytes(),
+            "count": self.take_count(),
         }
 
     # ------------------------------------------------------------ recording
@@ -307,6 +308,20 @@ class Recorder:
     def recorder_inputs(self):
         """The recorder's JACK inputs, while it's running -- for adding a backing track to a take."""
         return jackutil.ports(JACK_CLIENT, "input") if self.recording else []
+
+    def take_count(self):
+        """
+        How many wet takes are in the folder, the one rolling included. The
+        same entries listing() shows (no dry twins, no sidecars), counted
+        without probing durations, so it is cheap enough for every status().
+        """
+        try:
+            return sum(1 for e in os.scandir(self.dir)
+                       if e.is_file() and not e.name.startswith(".")
+                       and not e.name.endswith(".json")
+                       and not os.path.splitext(e.name)[0].endswith(DRY_SUFFIX))
+        except OSError:
+            return None
 
     def _free_bytes(self):
         try:
