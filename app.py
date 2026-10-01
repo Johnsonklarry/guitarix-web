@@ -13,6 +13,7 @@ Run it:
 """
 
 import contextvars
+import hmac
 import json
 import logging
 import mimetypes
@@ -31,7 +32,7 @@ if __name__ == "__main__" and "--check" in sys.argv:
     sys.exit(diagnose.main(sys.argv[1:]))
 
 from flask import (Flask, Response, abort, jsonify, render_template, request,
-                   send_from_directory, url_for)
+                   send_from_directory, session, url_for)
 from flask_socketio import SocketIO
 
 import controls
@@ -577,6 +578,35 @@ def manifest():
     """
     return send_from_directory(app.static_folder, "manifest.webmanifest",
                                mimetype="application/manifest+json")
+
+
+def check_password(candidate):
+    """True only when GX_PASSWORD is set and `candidate` matches it exactly."""
+    expected = os.environ.get("GX_PASSWORD", "")
+    if not expected or not isinstance(candidate, str):
+        return False
+    return hmac.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8"))
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    """Valid password: start a session (signed cookie). Anything else: 401."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = request.form
+    if not check_password(data.get("password")):
+        session.clear()
+        return jsonify({"ok": False, "error": "Wrong password."}), 401
+    session.clear()
+    session["authenticated"] = True
+    return jsonify({"ok": True})
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    """Ends the session; the cookie is cleared."""
+    session.clear()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/state")

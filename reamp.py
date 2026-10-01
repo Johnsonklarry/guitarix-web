@@ -85,7 +85,12 @@ class Reamp:
             saved = {port: [src for src in jackutil.connections(port)] for port in amp_inputs}
             for port, sources in saved.items():
                 for src in sources:
-                    jackutil.disconnect(src, port)
+                    if not jackutil.disconnect(src, port):
+                        # Reconnect what we already disconnected before bailing out
+                        for p, srcs in saved.items():
+                            for s in srcs:
+                                jackutil.connect(s, p)
+                        raise ReampError("couldn't disconnect %s from %s" % (src, port))
             session = {"take": take, "mode": mode, "record": bool(record),
                        "output": None, "saved": saved, "amp_inputs": amp_inputs}
             self._session = session
