@@ -26,6 +26,12 @@ ROOT = os.path.dirname(HERE)
 STUDIO_MARKERS = ('id="btn-save"', 'id="btn-live"', 'id="btn-listen"',
                   "/static/app.js", "/static/style.css", "/static/demo.js")
 
+shared_state = {}
+
+
+def reset_shared_state():
+    shared_state.clear()
+
 
 def check(cond, message):
     if not cond:
