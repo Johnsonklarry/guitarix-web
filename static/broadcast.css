@@ -221,6 +221,19 @@ body {
 
 /* ---------------------------------------------------------------- responsive */
 
-@media (max-width: 520px) {
-  .preset { font-size: .9rem; }
+@media (max-width: 480px) {
+  .presets {
+    grid-template-columns: 1fr;
+  }
+
+  .preset {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: .9rem;
+  }
+
+  .preset__name {
+    line-height: 1.2;
+  }
 }
