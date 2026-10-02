@@ -55,8 +55,14 @@ def connections(port):
     return [line.strip() for line in out.splitlines()[1:] if line.strip()]
 
 
-def connect(src, dst):
-    return subprocess.run(["jack_connect", src, dst], capture_output=True).returncode == 0
+def connect(src, dst, max_retries=3, backoff_factor=0.05):
+    for attempt in range(max_retries):
+        if subprocess.run(["jack_connect", src, dst], capture_output=True).returncode == 0:
+            return True
+        if attempt < max_retries - 1:
+            import time
+            time.sleep(backoff_factor * (2 ** attempt))
+    return False
 
 
 def disconnect(src, dst):
