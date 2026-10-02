@@ -14,6 +14,7 @@ change to every open browser, so a phone and a laptop stay in step.
 ## Contents
 
 - **Getting started:** [Quick start](#quick-start), [Checking it works](#checking-it-works)
+- **Reaching it from away:** [Secure LAN access over Tailscale or WireGuard](#secure-lan-access-over-tailscale-or-wireguard)
 - **Using it:** [Two layouts](#two-layouts), [Live mode](#live-mode), [Saving and creating presets](#saving-and-creating-presets), [Importing presets](#importing-presets), [Recording, reamping and backing tracks](#recording-reamping-and-backing-tracks), [On a phone: installing it as an app](#on-a-phone-installing-it-as-an-app), [Demo mode](#demo-mode), [Broadcast mode](#broadcast-mode)
 - **Tuning the controls:** [Adding controls](#adding-controls), [Taming a plugin with too many parameters](#taming-a-plugin-with-too-many-parameters), [Cryptic parameter names](#cryptic-parameter-names)
 - **How it works:** [How the sync works](#how-the-sync-works), [When the engine goes quiet mid-operation](#when-the-engine-goes-quiet-mid-operation), [Running under gunicorn](#running-under-gunicorn)
@@ -63,6 +64,7 @@ Checks
   tests/lint.py           undefined names and stale references between files
   tests/run_server_tests.py   the server, against fake guitarix / JACK / ffmpeg / mpv
   tests/broadcast_tests.py    broadcast mode: what a stranger can and can't reach
+  tests/network_tests.py      VPN config and bind address: Tailscale/WireGuard
   tests/check_page.js     the page, against a fake browser
   tests/ui_audit.py       looks and feel, measured in a real browser
   tests/fakes/engine.py   a fake guitarix, run on a spare port
@@ -639,6 +641,85 @@ python3 dump_params.py                 # can this machine reach it?
 `GX_HOST` and `GX_PORT` at the top of `app.py` are where it tries. The app
 reconnects on its own once the engine answers -- no restart needed.
 
+## Secure LAN access over Tailscale or WireGuard
+
+The app has no login, so the safe way to reach it from a phone or laptop away
+from home is a VPN, not a port forward. Either of these puts your devices on
+the same private network as the Pi, and the app is then reached at the Pi's
+VPN address exactly as it is on the LAN -- no changes to `app.py`, no
+certificate, nothing exposed to the internet.
+
+**Tailscale** is the least work: it does NAT traversal and key management for
+you, and gives every device a stable `100.x.y.z` address.
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+tailscale ip -4          # the Pi's address on the tailnet, e.g. 100.101.102.103
+```
+
+Install Tailscale on the phone or laptop too, sign in to the same tailnet, and
+open `http://100.101.102.103:5000`. Nothing is forwarded and nothing is
+reachable by anyone not on the tailnet. To keep the app off the LAN entirely,
+bind it to the tailnet address only:
+
+```bash
+GX_WEB_HOST=100.101.102.103 python3 app.py
+# or, under gunicorn:
+# gunicorn -k gthread -w 1 --threads 100 -b 100.101.102.103:5000 wsgi:app
+```
+
+**WireGuard** is the same idea with the keys and the peer list managed by hand.
+On the Pi:
+
+```bash
+sudo apt install wireguard
+wg genkey | sudo tee /etc/wireguard/pi.key | wg pubkey | sudo tee /etc/wireguard/pi.pub
+sudo chmod 600 /etc/wireguard/pi.key
+```
+
+`/etc/wireguard/wg0.conf` on the Pi -- `Address` is the Pi's address inside the
+tunnel, and each `[Peer]` is one device allowed in:
+
+```ini
+[Interface]
+Address = 10.10.0.1/24
+ListenPort = 51820
+PrivateKey = <contents of /etc/wireguard/pi.key>
+
+[Peer]
+# phone
+PublicKey = <the phone's public key>
+AllowedIPs = 10.10.0.2/32
+```
+
+```bash
+sudo systemctl enable --now wg-quick@wg0
+sudo wg show             # the interface, its port and its peers
+```
+
+The phone's config points `Endpoint` at the Pi's LAN address (or a hostname
+that resolves to it) and `AllowedIPs` at `10.10.0.0/24` -- *not* `0.0.0.0/0`,
+unless you want all the phone's traffic tunnelled. Then open
+`http://10.10.0.1:5000`.
+
+**What to check.** From the remote device, with the tunnel up:
+
+```bash
+ping 100.101.102.103          # Tailscale, or 10.10.0.1 for WireGuard
+curl -sI http://100.101.102.103:5000/ | head -1     # HTTP/1.1 200 OK
+```
+
+Then open the page and confirm the header lamp is green and the preset list
+loads -- that is the app talking to guitarix over the tunnel. `python3
+tests/network_tests.py` checks the parts of this that can be checked without a
+real tunnel: that the app binds where it is told to, and that the VPN
+configuration files it is given are well formed.
+
+Two things a VPN does not change: the page still loads Socket.IO from a CDN,
+so the remote device needs internet as well as the tunnel, and **Listen** is
+still plain http, so a phone's screen-lock behaviour is unchanged.
+
 ## Running under gunicorn
 
 Werkzeug's development server is fine on a LAN. To serve with gunicorn instead:
@@ -663,7 +744,9 @@ line to swap in. gunicorn doesn't run on Windows, but the app does, via
 - **No login.** Anyone who can reach port 5000 can delete takes, overwrite
   presets and disconnect your guitar with a reamp. Keep it on your LAN; to
   show it off, forward the demo-only copy (see **Demo mode**); to use it away
-  from home, put it behind an Nginx Proxy Manager Access List or a VPN.
+  from home, put it behind an Nginx Proxy Manager Access List or a VPN such as
+  Tailscale or WireGuard -- see **Secure LAN access over Tailscale or
+  WireGuard**.
 - **The page loads Socket.IO from a CDN**, so a device with no internet can't
   connect. Download `socket.io.min.js` (4.7.5) into `static/` and point the
   `<script>` in `templates/index.html` at `{{ asset('socket.io.min.js') }}`.
