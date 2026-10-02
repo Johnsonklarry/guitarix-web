@@ -59,14 +59,15 @@ class _Ipc:
         deadline = time.time() + timeout
         last = None
         while time.time() < deadline:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
-                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 s.connect(path)
                 s.settimeout(2.0)
                 self._sock, self._buf = s, b""
                 self._lock, self._n = threading.Lock(), 0
                 return
             except OSError as exc:
+                s.close()
                 last = exc
                 time.sleep(0.05)
         raise PlayerError("mpv's control socket never appeared (%s)" % last)
