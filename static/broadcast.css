@@ -4,8 +4,8 @@
   it can change nothing.
 */
 
-/* Use the same custom properties as the main style */
-@import url("./style.css");
+/* Shared components come from style.css, which broadcast.html loads first;
+   everything here is broadcast-specific. */
 
 /* ---------------------------------------------------------------- layout */
 
@@ -74,7 +74,7 @@ body {
   transition: background .2s ease, box-shadow .2s ease;
 }
 
-.pilot.is-live  { background: var(--lamp);  box-shadow: 0 0 9px var(--lamp-glow); }
+.pilot.is-on    { background: var(--lamp);  box-shadow: 0 0 9px var(--lamp-glow); }
 .pilot.is-fault { background: var(--fault); box-shadow: 0 0 9px rgba(208,69,60,.4); }
 
 /* ---------------------------------------------------------------- main */
@@ -125,6 +125,13 @@ body {
   cursor: default;
   -webkit-tap-highlight-color: transparent;
   box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 2px 4px rgba(0,0,0,.4);
+}
+
+.preset:focus-visible,
+.listen:focus-visible,
+.pilot:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .lamp {
@@ -191,6 +198,19 @@ body {
   transition: background .14s ease, border-color .14s ease, color .14s ease;
 }
 
+.listen audio,
+.listen__audio {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  accent-color: var(--accent);
+}
+
+.listen audio:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .listen__lamp {
   width: 9px; height: 9px;
   border-radius: 50%;
@@ -235,5 +255,29 @@ body {
 
   .preset__name {
     line-height: 1.2;
+  }
+
+  .listen {
+    width: 100%;
+  }
+
+  .listen audio,
+  .listen__audio {
+    width: 100%;
+  }
+}
+
+@media (max-width: 360px) {
+  body {
+    padding: 8px;
+  }
+
+  .grille {
+    padding: 10px;
+  }
+
+  .preset {
+    padding: 10px 12px;
+    letter-spacing: .08em;
   }
 }
