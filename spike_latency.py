@@ -152,7 +152,10 @@ def pump_fake():
 def send(seq, buf):
     if state["listeners"] <= 0:
         return
-    socketio.emit("pcm", {"seq": seq, "t": now_ms(), "buf": buf})
+    def on_error():
+        with listeners_lock:
+            state["listeners"] = max(0, state["listeners"] - 1)
+    socketio.emit("pcm", {"seq": seq, "t": now_ms(), "buf": buf}, timeout=1.0, error_callback=on_error)
 
 
 # ---------------------------------------------------------------- the page
