@@ -56,7 +56,7 @@
       <button class="act is-quiet" id="demo-exit" type="button">Exit demo</button>
     </p>
 
-    <p class="alert" id="offline" hidden role="status">
+    <p class="alert" id="offline" hidden role="status" data-hook="status">
       <span class="alert__lamp" aria-hidden="true"></span>
       <span id="offline-text">Not connected to the guitarix engine.</span>
     </p>
@@ -184,7 +184,7 @@
           <span class="rec-note" id="rec-note"></span>
         </div>
 
-        <div class="takes" id="takes">
+        <div class="takes" id="takes" data-hook="broadcast-status">
           <p class="empty">No takes yet.</p>
         </div>
 
