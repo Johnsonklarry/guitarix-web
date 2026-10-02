@@ -111,6 +111,7 @@ class Player:
         self._volume, self._loop = 100, False
         self._stopping = False
         self._lock = threading.Lock()
+        self._play_lock = threading.Lock()
 
     @staticmethod
     def installed():
@@ -127,49 +128,50 @@ class Player:
 
     def play(self, path, targets, volume=100, loop=False):
         """Start `path`, wired to `targets` before any sound comes out."""
-        self.stop()
-        if not self.installed():
-            raise PlayerError("mpv isn't installed on the Pi (sudo apt install mpv)")
+        with self._play_lock:
+            self.stop()
+            if not self.installed():
+                raise PlayerError("mpv isn't installed on the Pi (sudo apt install mpv)")
 
-        sock = os.path.join(tempfile.gettempdir(), "gxweb-%s-%d.sock" % (self.client, os.getpid()))
-        try:
-            os.unlink(sock)
-        except OSError:
-            pass
-
-        with self._lock:
-            self._stopping = False
-            self._volume, self._loop = volume, loop
-            self._path, self._targets = path, list(targets)
+            sock = os.path.join(tempfile.gettempdir(), "gxweb-%s-%d.sock" % (self.client, os.getpid()))
             try:
-                self._proc = subprocess.Popen(
-                    mpv_args(self.client, sock, path, volume, loop),
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            except OSError as exc:
-                self._proc = None
-                raise PlayerError("couldn't start mpv: %s" % exc)
+                os.unlink(sock)
+            except OSError:
+                pass
 
-        try:
-            self._ipc = _Ipc(sock)
-            outs = self._wait_for_ports(paused=True)
-            if not outs:
-                # some builds only open the audio output once playing: start,
-                # wire, then go back to the top so nothing is lost
-                self._ipc.command("set_property", "pause", False)
-                outs = self._wait_for_ports(paused=False)
+            with self._lock:
+                self._stopping = False
+                self._volume, self._loop = volume, loop
+                self._path, self._targets = path, list(targets)
+                try:
+                    self._proc = subprocess.Popen(
+                        mpv_args(self.client, sock, path, volume, loop),
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                except OSError as exc:
+                    self._proc = None
+                    raise PlayerError("couldn't start mpv: %s" % exc)
+
+            try:
+                self._ipc = _Ipc(sock)
+                outs = self._wait_for_ports(paused=True)
                 if not outs:
-                    raise PlayerError("mpv never showed up in JACK — is its JACK output working?")
-                self._wire(outs, self._targets)
-                self._ipc.command("seek", 0, "absolute")
-            else:
-                self._wire(outs, self._targets)
-                self._ipc.command("set_property", "pause", False)
-        except PlayerError:
-            self._kill()
-            raise
+                    # some builds only open the audio output once playing: start,
+                    # wire, then go back to the top so nothing is lost
+                    self._ipc.command("set_property", "pause", False)
+                    outs = self._wait_for_ports(paused=False)
+                    if not outs:
+                        raise PlayerError("mpv never showed up in JACK — is its JACK output working?")
+                    self._wire(outs, self._targets)
+                    self._ipc.command("seek", 0, "absolute")
+                else:
+                    self._wire(outs, self._targets)
+                    self._ipc.command("set_property", "pause", False)
+            except PlayerError:
+                self._kill()
+                raise
 
-        threading.Thread(target=self._watch, args=(self._proc,), daemon=True).start()
-        self.on_change()
+            threading.Thread(target=self._watch, args=(self._proc,), daemon=True).start()
+            self.on_change()
 
     def route(self, targets):
         """Send the sound somewhere else, mid-playback. Old wiring comes down."""
