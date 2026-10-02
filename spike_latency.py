@@ -250,11 +250,29 @@ function sync(n, done) {
       return done();
     }
     const sent = performance.now();
-    socket.emit('ping2', { t: sent }, function (r) {
-      const rtt = performance.now() - sent;
-      samples.push(r.server - (sent + rtt / 2));
+    let handled = false;
+    const timer = setTimeout(function () {
+      if (handled) return;
+      handled = true;
       next(i + 1);
-    });
+    }, 1000);
+    try {
+      socket.emit('ping2', { t: sent }, function (r) {
+        if (handled) return;
+        handled = true;
+        clearTimeout(timer);
+        if (r && typeof r.server === 'number') {
+          const rtt = performance.now() - sent;
+          samples.push(r.server - (sent + rtt / 2));
+        }
+        next(i + 1);
+      });
+    } catch (err) {
+      if (handled) return;
+      handled = true;
+      clearTimeout(timer);
+      next(i + 1);
+    }
   })(0);
 }
 
