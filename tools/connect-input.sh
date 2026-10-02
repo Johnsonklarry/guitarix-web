@@ -46,7 +46,9 @@ while [ "$i" -lt "$ATTEMPTS" ]; do
             ;;
     esac
     i=$((i + 1))
-    sleep "$DELAY"
+    if [ "$i" -lt "$ATTEMPTS" ]; then
+        sleep "$DELAY"
+    fi
 done
 
 echo "gave up after $ATTEMPTS attempts: $SRC or $DST never appeared in jack_lsp" >&2

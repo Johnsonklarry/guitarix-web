@@ -122,6 +122,14 @@ def main():
                 sock_path = arg[len('--input-ipc-server='):]  
             elif arg.startswith('--volume='):
                 volume = max(0, min(100, int(arg[len('--volume='):])))
+            elif arg.startswith('--ao='):
+                pass
+            elif arg.startswith('--jack-autostart='):
+                pass
+            elif arg.startswith('--jack-connect='):
+                pass
+            elif arg in ('--no-config', '--no-terminal', '--no-video', '--really-quiet'):
+                pass
     except Exception as e:
         sys.exit(1)
     

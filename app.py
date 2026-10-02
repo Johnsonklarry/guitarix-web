@@ -187,27 +187,54 @@ socketio.start_background_task = _start_task_for_requester
 class StateCoordinator:
     """Thread-safe coordinator tracking subsystem states with monotonic generation numbering."""
 
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._generation = 0
+    def __init__(self, state_obj=None):
+        self.lock = threading.Lock()
+        self._lock = self.lock
+        self.state = state_obj
+        self.generation = 0
         self._states = {}
 
+    @property
+    def _generation(self):
+        return self.generation
+
+    @_generation.setter
+    def _generation(self, value):
+        self.generation = value
+
     def update_subsystem(self, name, state):
-        with self._lock:
+        with self.lock:
             self._states[name] = state
-            self._generation += 1
-            return self._generation
+            self.generation += 1
+            return self.generation
+
+    def next_generation(self):
+        with self.lock:
+            self.generation += 1
+            return self.generation
 
     def get_generation(self):
-        with self._lock:
-            return self._generation
+        with self.lock:
+            return self.generation
 
     def snapshot(self):
-        with self._lock:
+        with self.lock:
+            if self.state is not None:
+                snap = self.state.snapshot()
+                snap["generation"] = self.generation
+                return snap
             return {
-                "generation": self._generation,
+                "generation": self.generation,
                 "states": dict(self._states),
             }
+
+    def publish(self, event, payload=None):
+        gen = self.next_generation()
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload["generation"] = gen
+        socketio.emit(event, payload)
+        return gen
 
 
 class AmpState:

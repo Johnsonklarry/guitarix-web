@@ -66,13 +66,33 @@ def main():
                         if tool_name:
                             # Collect flags from the list
                             for elt in node.elts[1:]:  # Skip first element (tool name)
+                                candidates = []
                                 if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                    flag = elt.value
-                                    if flag.startswith("-"):
-                                        # Handle --name=value form
-                                        if "=" in flag:
-                                            project_flags[tool_name].add(flag.split("=")[0])
-                                        else:
+                                    candidates.append(elt.value)
+                                elif isinstance(elt, ast.JoinedStr):
+                                    for part in elt.values:
+                                        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                                            candidates.append(part.value)
+                                            break
+                                elif isinstance(elt, ast.BinOp):
+                                    # string concatenation or % formatting
+                                    cur = elt
+                                    while isinstance(cur, ast.BinOp):
+                                        cur = cur.left
+                                    if isinstance(cur, ast.Constant) and isinstance(cur.value, str):
+                                        candidates.append(cur.value)
+                                elif isinstance(elt, ast.Call) and isinstance(elt.func, ast.Attribute) and elt.func.attr == "format":
+                                    if isinstance(elt.func.value, ast.Constant) and isinstance(elt.func.value.value, str):
+                                        candidates.append(elt.func.value.value)
+
+                                for text in candidates:
+                                    if text.startswith("-"):
+                                        flag = text.split("=")[0].split()[0]
+                                        if "%" in flag:
+                                            flag = flag.split("%")[0]
+                                        if "{" in flag:
+                                            flag = flag.split("{")[0]
+                                        if flag.startswith("-"):
                                             project_flags[tool_name].add(flag)
     
     # Read fake files and collect their flags
