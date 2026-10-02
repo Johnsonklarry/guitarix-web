@@ -546,10 +546,16 @@ rpc = GuitarixRPC(GX_HOST, GX_PORT,
 BROADCAST_ENDPOINTS = ("index", "static", "manifest", "monitor_stream")
 
 
+# What a demo-only server will answer: the page, its assets, and the manifest.
+# Everything else -- the parameter list, the recordings, the uploads, the
+# monitor stream -- could reach the rig, so it is refused.
+DEMO_ENDPOINTS = ("index", "static", "manifest")
+
+
 @app.before_request
 def demo_only_guard():
     """A demo-only server hands out the page and its files, and nothing else."""
-    if DEMO_ONLY and request.endpoint not in ("index", "static", "manifest"):
+    if DEMO_ONLY and request.endpoint not in DEMO_ENDPOINTS:
         abort(403)
     if BROADCAST and request.endpoint not in BROADCAST_ENDPOINTS:
         abort(403)
