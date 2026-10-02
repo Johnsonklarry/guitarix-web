@@ -35,6 +35,46 @@ class FakeEngine:
         self.clients = set()
         self.lock = threading.Lock()
         self.running = True
+
+        # Fault injection, armed from the environment so a test can start the
+        # fake engine with a transition already broken. Every injection is
+        # appended to GX_FAULT_LOG (default: alongside this file) so a test
+        # can assert what was injected.
+        self.faults = {
+            'delay': float(os.environ.get('GX_FAULT_DELAY', 0) or 0),
+            'stall': float(os.environ.get('GX_FAULT_STALL', 0) or 0),
+            'crash': [m for m in os.environ.get('GX_FAULT_CRASH', '').split(',') if m],
+            'drop': [m for m in os.environ.get('GX_FAULT_DROP', '').split(',') if m],
+        }
+        self.fault_log = os.environ.get('GX_FAULT_LOG', os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'engine_faults.log'))
+
+    def _inject(self, method):
+        """
+        Apply the armed faults for one request. Returns True when the request
+        must be treated as failed (dropped or crashed); sleeps for delay/stall
+        either way.
+        """
+        import time
+        if self.faults['delay']:
+            time.sleep(self.faults['delay'])
+        if method in self.faults['crash']:
+            self._log_fault('crash', method)
+            return True
+        if method in self.faults['drop']:
+            self._log_fault('drop', method)
+            return True
+        if self.faults['stall']:
+            self._log_fault('stall', method)
+            time.sleep(self.faults['stall'])
+        return False
+
+    def _log_fault(self, kind, detail):
+        try:
+            with open(self.fault_log, 'a') as f:
+                f.write(json.dumps({'kind': kind, 'detail': detail}) + '\n')
+        except OSError:
+            pass
         
         # Handle SIGTERM
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -110,7 +150,16 @@ class FakeEngine:
         method = request['method']
         params = request.get('params', [])
         call_id = request.get('id')
-        
+
+        if self._inject(method):
+            # A dropped or crashed transition: close the socket so the client
+            # sees the failure the way it would see a real engine dying.
+            try:
+                client_socket.close()
+            except OSError:
+                pass
+            return
+
         if method == 'get':
             if call_id is not None:
                 # One flat object, not a list of single-key ones: gx_rpc.get()
