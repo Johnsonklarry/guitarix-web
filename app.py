@@ -184,6 +184,32 @@ def _start_task_for_requester(target, *args, **kwargs):
 socketio.start_background_task = _start_task_for_requester
 
 
+class StateCoordinator:
+    """Thread-safe coordinator tracking subsystem states with monotonic generation numbering."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._generation = 0
+        self._states = {}
+
+    def update_subsystem(self, name, state):
+        with self._lock:
+            self._states[name] = state
+            self._generation += 1
+            return self._generation
+
+    def get_generation(self):
+        with self._lock:
+            return self._generation
+
+    def snapshot(self):
+        with self._lock:
+            return {
+                "generation": self._generation,
+                "states": dict(self._states),
+            }
+
+
 class AmpState:
     """Everything the browsers need, kept in one place behind a lock."""
 
