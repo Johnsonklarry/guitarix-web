@@ -184,6 +184,34 @@ def _start_task_for_requester(target, *args, **kwargs):
 socketio.start_background_task = _start_task_for_requester
 
 
+class StateCoordinator:
+    """Coordinates state publications with a monotonically increasing generation number."""
+
+    def __init__(self, state_obj):
+        self.state = state_obj
+        self.lock = threading.Lock()
+        self.generation = 0
+
+    def next_generation(self):
+        with self.lock:
+            self.generation += 1
+            return self.generation
+
+    def snapshot(self):
+        with self.lock:
+            snap = self.state.snapshot()
+            snap["generation"] = self.generation
+            return snap
+
+    def publish(self, event, payload=None):
+        gen = self.next_generation()
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload["generation"] = gen
+        socketio.emit(event, payload)
+        return gen
+
+
 class AmpState:
     """Everything the browsers need, kept in one place behind a lock."""
 
