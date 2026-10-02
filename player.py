@@ -110,7 +110,7 @@ class Player:
         self._targets = []
         self._volume, self._loop = 100, False
         self._stopping = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     @staticmethod
     def installed():
@@ -215,14 +215,14 @@ class Player:
             if not self.playing:
                 return
             self._stopping = True
-        try:
-            self._ipc.command("quit")
-        except (PlayerError, AttributeError, OSError):
-            pass
-        try:
-            self._proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            self._kill()
+            try:
+                self._ipc.command("quit")
+            except (PlayerError, AttributeError, OSError):
+                pass
+            try:
+                self._proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self._kill()
 
     # ------------------------------------------------------------ status
 
