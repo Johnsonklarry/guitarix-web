@@ -40,8 +40,23 @@ CHUNK = 1024                    # read1() size: ~51 ms of audio, never wait to f
 # listener loses its oldest whole MP3 frames until it is back inside the budget.
 # This bounds only the queue in this process, not ffmpeg/browser/proxy buffering.
 LAG_BUDGET = 0.5
-MAX_LAG_BYTES = int(LAG_BUDGET * BYTES_PER_SEC)
+MIN_LAG_BUDGET = 0.2
+MAX_LAG_BUDGET = 2.0
+_reported_buffer_time = None
 STDERR_TAIL = 2048              # bytes of encoder stderr kept for the log
+
+
+def report_buffer_time(seconds):
+    """Update the client-reported playback buffer time (in seconds)."""
+    global _reported_buffer_time
+    _reported_buffer_time = seconds
+
+
+def effective_budget():
+    """Return the effective lag budget in seconds clamped between bounds."""
+    if _reported_buffer_time is None:
+        return LAG_BUDGET
+    return max(MIN_LAG_BUDGET, min(MAX_LAG_BUDGET, _reported_buffer_time))
 
 _KBPS = (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0)   # MPEG-1 layer III
 _HZ = (44100, 48000, 32000, 0)
@@ -87,10 +102,11 @@ def _take_frames(pending):
 
 def _offer(q, item):
     """Queue `item`, first shedding the oldest items until q is inside the lag budget."""
+    max_lag_bytes = int(effective_budget() * BYTES_PER_SEC)
     while True:
         with q.mutex:
             queued = sum(len(c) for c in q.queue if c)
-        if queued + len(item) <= MAX_LAG_BYTES:
+        if queued + len(item) <= max_lag_bytes:
             break
         try:
             q.get_nowait()                         # drop the oldest: stay near live
