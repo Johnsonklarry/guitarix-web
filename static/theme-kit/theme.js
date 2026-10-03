@@ -2,26 +2,30 @@
   "use strict";
 
   var root = document.documentElement;
-  var storageKey = "theme-kit-choice";
+  var storageKey = "theme-kit-v2";
+  var legacyStorageKey = "theme-kit-choice";
+  // native: the look the theme was drawn in (no data-mode = that look). Only the two
+  // daytime themes are light-native; every other theme is dark-native.
   var themes = [
-    { id: "bag-end", name: "Fireside" },
-    { id: "middle-earth", name: "Middle-earth" },
-    { id: "plex-amber", name: "Amber" },
-    { id: "amp-lamp", name: "Amp lamp" },
-    { id: "studio-glass", name: "Studio" },
-    { id: "mission-control", name: "Console" },
-    { id: "light", name: "Light" },
-    { id: "dark", name: "Dark" },
-    { id: "shire", name: "The Shire" },
-    { id: "pipeweed", name: "Pipeweed" },
-    { id: "woodland-realm", name: "Woodland Realm" },
-    { id: "minas-tirith", name: "White City" },
-    { id: "mount-doom", name: "Mount Doom" },
-    { id: "balrog", name: "Balrog" }
+    { id: "bag-end", name: "Fireside", native: "dark" },
+    { id: "middle-earth", name: "Middle-earth", native: "dark" },
+    { id: "plex-amber", name: "Amber", native: "dark" },
+    { id: "amp-lamp", name: "Amp lamp", native: "dark" },
+    { id: "studio-glass", name: "Studio", native: "dark" },
+    { id: "mission-control", name: "Console", native: "dark" },
+    { id: "shire", name: "The Shire", native: "light" },
+    { id: "pipeweed", name: "Pipeweed", native: "dark" },
+    { id: "woodland-realm", name: "Woodland Realm", native: "dark" },
+    { id: "minas-tirith", name: "White City", native: "light" },
+    { id: "mount-doom", name: "Mount Doom", native: "dark" },
+    { id: "balrog", name: "Balrog", native: "dark" }
   ];
+  var modes = ["light", "dark", "oled", "system"];
+  var modeNames = { light: "Light", dark: "Dark", oled: "OLED", system: "System" };
+  // The old generic themes are now bag-end in the matching mode.
+  var legacyThemeModes = { light: "light", dark: "dark" };
   var listeners = [];
   var choice = null;
-  var followsSystem = false;
   var colorPreference = window.matchMedia
     ? window.matchMedia("(prefers-color-scheme: dark)")
     : null;
@@ -30,18 +34,59 @@
     return themes.some(function (theme) { return theme.id === id; });
   }
 
-  function readChoice() {
-    try {
-      var value = window.localStorage.getItem(storageKey);
-      if (!value) return null;
-      var parsed = JSON.parse(value);
-      if (parsed && validId(parsed.id) && typeof parsed.oled === "boolean") {
-        return { id: parsed.id, oled: parsed.oled };
-      }
-    } catch (error) {
-      // Storage can be unavailable or contain an obsolete value.
+  function validMode(mode) {
+    return modes.indexOf(mode) !== -1 && (mode !== "system" || colorPreference !== null);
+  }
+
+  function nativeMode(id) {
+    for (var i = 0; i < themes.length; i++) {
+      if (themes[i].id === id) return themes[i].native || "dark";
     }
+    return "dark";
+  }
+
+  function resolveMode(mode) {
+    if (mode === "system") return colorPreference && colorPreference.matches ? "dark" : "light";
+    return mode;
+  }
+
+  function normalise(id, mode, back) {
+    if (!validMode(mode)) mode = nativeMode(id);
+    if (!validMode(back) || back === "oled") back = mode === "oled" ? nativeMode(id) : mode;
+    return { id: id, mode: mode, back: back };
+  }
+
+  function readStorage(key) {
+    try {
+      var value = window.localStorage.getItem(key);
+      return value ? JSON.parse(value) : null;
+    } catch (error) {
+      return null; // Storage can be unavailable or hold an obsolete value.
+    }
+  }
+
+  // v2 value: {id, mode, back}; back = the mode toggleOled() returns to.
+  function readChoice() {
+    var parsed = readStorage(storageKey);
+    if (parsed && validId(parsed.id)) return normalise(parsed.id, parsed.mode, parsed.back);
     return null;
+  }
+
+  // Legacy "theme-kit-choice" {id, oled}: oled true -> mode oled; the removed generic
+  // "light" / "dark" themes become bag-end in that mode; otherwise the theme's native mode.
+  function readLegacyChoice() {
+    var parsed = readStorage(legacyStorageKey);
+    if (!parsed || typeof parsed.id !== "string") return null;
+    var id = parsed.id;
+    var mode = null;
+    if (Object.prototype.hasOwnProperty.call(legacyThemeModes, id)) {
+      mode = legacyThemeModes[id];
+      id = "bag-end";
+    }
+    if (!validId(id)) return null;
+    if (mode === null) mode = nativeMode(id);
+    if (parsed.oled === true) return normalise(id, "oled", mode);
+    return normalise(id, mode, mode);
   }
 
   function saveChoice(value) {
@@ -59,32 +104,48 @@
     });
   }
 
-  function apply(id, oled) {
-    var changed = root.getAttribute("data-theme") !== id ||
-      root.getAttribute("data-oled") !== String(oled);
-    root.setAttribute("data-theme", id);
-    root.setAttribute("data-oled", String(oled));
-    choice = { id: id, oled: oled };
+  function apply(next) {
+    var resolved = resolveMode(next.mode);
+    var changed = root.getAttribute("data-theme") !== next.id ||
+      root.getAttribute("data-mode") !== resolved ||
+      !choice || choice.mode !== next.mode;
+    root.setAttribute("data-theme", next.id);
+    root.setAttribute("data-mode", resolved);
+    // data-oled stays in sync for consumers that still key their own CSS on it.
+    root.setAttribute("data-oled", String(resolved === "oled"));
+    choice = next;
     if (changed) notify();
   }
 
   function get() {
-    return { id: choice.id, oled: choice.oled };
+    var resolved = resolveMode(choice.mode);
+    return { id: choice.id, mode: choice.mode, resolvedMode: resolved, oled: resolved === "oled" };
   }
 
   function set(id, options) {
     if (!validId(id)) throw new RangeError("Unknown theme: " + id);
-    var oled = options && Object.prototype.hasOwnProperty.call(options, "oled")
-      ? Boolean(options.oled)
-      : choice.oled;
-    followsSystem = false;
-    apply(id, oled);
+    var mode = choice.mode;
+    var back = choice.back;
+    if (options && Object.prototype.hasOwnProperty.call(options, "mode")) {
+      if (!validMode(options.mode)) throw new RangeError("Unknown mode: " + options.mode);
+      mode = options.mode;
+      if (mode !== "oled") back = mode;
+    } else if (options && Object.prototype.hasOwnProperty.call(options, "oled")) {
+      // Old call shape: set(id, {oled}).
+      mode = options.oled ? "oled" : (choice.mode === "oled" ? choice.back : choice.mode);
+      if (mode !== "oled") back = mode;
+    }
+    apply(normalise(id, mode, back));
     saveChoice(choice);
     return get();
   }
 
+  function setMode(mode) {
+    return set(choice.id, { mode: mode });
+  }
+
   function toggleOled() {
-    return set(choice.id, { oled: !choice.oled });
+    return setMode(choice.mode === "oled" ? choice.back : "oled");
   }
 
   function onChange(fn) {
@@ -98,6 +159,8 @@
 
   var switcherCount = 0;
 
+  // Two controls: a Theme <select> and a Mode group of segmented buttons
+  // (Light / Dark / OLED / System), 44px targets via .tk-tap, aria-pressed on the active mode.
   function mountSwitcher(container) {
     if (!container || typeof container.appendChild !== "function") {
       throw new TypeError("Expected a container element");
@@ -106,8 +169,11 @@
     var wrapper = document.createElement("div");
     var label = document.createElement("label");
     var select = document.createElement("select");
-    var button = document.createElement("button");
+    var group = document.createElement("div");
+    var groupLabel = document.createElement("span");
     var selectId = "theme-kit-select-" + (++switcherCount);
+    var groupLabelId = "theme-kit-mode-label-" + switcherCount;
+    var buttons = [];
 
     label.setAttribute("for", selectId);
     label.textContent = "Theme";
@@ -119,25 +185,42 @@
       select.appendChild(option);
     });
 
+    groupLabel.id = groupLabelId;
+    groupLabel.textContent = "Mode";
+    group.className = "tk-modes";
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-labelledby", groupLabelId);
+    modes.forEach(function (mode) {
+      if (!validMode(mode)) return; // "system" needs matchMedia
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "tk-tap";
+      button.textContent = modeNames[mode];
+      button.setAttribute("data-mode", mode);
+      button.setAttribute("aria-pressed", "false");
+      button.addEventListener("click", function () { setMode(mode); });
+      group.appendChild(button);
+      buttons.push(button);
+    });
+
     wrapper.className = "tk-bar";
     select.className = "tk-tap";
-    button.className = "tk-tap";
-    button.type = "button";
-    button.textContent = "OLED mode";
 
     function update(value) {
       select.value = value.id;
-      button.setAttribute("aria-pressed", String(value.oled));
+      buttons.forEach(function (button) {
+        button.setAttribute("aria-pressed", String(button.getAttribute("data-mode") === value.mode));
+      });
     }
 
     select.addEventListener("change", function () {
-      set(select.value, { oled: get().oled });
+      set(select.value);
     });
-    button.addEventListener("click", toggleOled);
 
     wrapper.appendChild(label);
     wrapper.appendChild(select);
-    wrapper.appendChild(button);
+    wrapper.appendChild(groupLabel);
+    wrapper.appendChild(group);
     container.appendChild(wrapper);
     update(get());
 
@@ -269,23 +352,34 @@
     };
   }
 
+  // Start-up order: saved v2 choice, migrated legacy choice, the page's own attributes
+  // (data-theme / data-mode, legacy data-oled, legacy theme ids), data-theme-auto, bag-end.
   var stored = readChoice();
+  var legacy = stored ? null : readLegacyChoice();
   var initialId = root.getAttribute("data-theme");
-  var initialOled = root.getAttribute("data-oled") === "true";
+  var initialMode = root.getAttribute("data-mode");
   if (stored) {
-    apply(stored.id, stored.oled);
-  } else if (validId(initialId)) {
-    apply(initialId, initialOled);
-  } else if (root.getAttribute("data-theme-auto") === "true" && colorPreference) {
-    followsSystem = true;
-    apply(colorPreference.matches ? "dark" : "light", initialOled);
+    apply(stored);
+  } else if (legacy) {
+    apply(legacy);
+    saveChoice(choice);
   } else {
-    apply("bag-end", initialOled);
+    if (Object.prototype.hasOwnProperty.call(legacyThemeModes, initialId)) {
+      initialMode = legacyThemeModes[initialId];
+      initialId = "bag-end";
+    }
+    if (!validId(initialId)) initialId = "bag-end";
+    if (!validMode(initialMode)) {
+      if (root.getAttribute("data-oled") === "true") initialMode = "oled";
+      else if (root.getAttribute("data-theme-auto") === "true" && colorPreference) initialMode = "system";
+      else initialMode = nativeMode(initialId);
+    }
+    apply(normalise(initialId, initialMode, initialMode));
   }
 
   if (colorPreference) {
-    var systemChanged = function (event) {
-      if (followsSystem) apply(event.matches ? "dark" : "light", get().oled);
+    var systemChanged = function () {
+      if (choice.mode === "system") apply(choice);
     };
     if (colorPreference.addEventListener) {
       colorPreference.addEventListener("change", systemChanged);
@@ -296,8 +390,10 @@
 
   window.ThemeKit = {
     themes: themes,
+    modes: modes,
     get: get,
     set: set,
+    setMode: setMode,
     toggleOled: toggleOled,
     mountSwitcher: mountSwitcher,
     onChange: onChange,
