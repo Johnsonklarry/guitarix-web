@@ -175,8 +175,9 @@ def check_engine(r):
               "start it with the rpc port open: guitarix -N -p %d" % port)
         return
     try:
-        params = rpc.parameter_list()
-        banks = rpc.banks()
+        # diagnostics are bulk work: they must not sit in front of a knob move
+        params = rpc.parameter_list(lane=gx_rpc.LOW)
+        banks = rpc.banks(lane=gx_rpc.LOW)
         bank, preset = rpc.current_preset()
         r.add(OK, "guitarix", "%s:%d -- %d parameters, %d banks, playing %s/%s"
               % (host, port, len(params), len(banks), bank, preset))

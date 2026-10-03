@@ -32,6 +32,101 @@ import time
 
 log = logging.getLogger("gx_rpc")
 
+# Two lanes over the one socket. Live control (a knob move, a preset load)
+# goes out on HIGH and is scheduled ahead of bulk work (imports, exports,
+# diagnostics) on LOW, so a long import can't sit in front of a knob move.
+HIGH, LOW = 0, 1
+LANES = (HIGH, LOW)
+
+
+class PriorityLaneQueue:
+    """
+    Priority-lane queue for RPC operations on a single connection.
+
+    Two classes of work (high and low) are kept in separate FIFO lanes.
+    Selection always drains the high lane before the low lane, so a pending
+    high-priority operation is never overtaken by a low-priority one.
+
+    Every operation carries a per-operation deadline (seconds from enqueue).
+    This class performs no socket I/O: it is driven entirely by an injected
+    clock, so it can be exercised with a fake clock in tests.
+    """
+
+    HIGH = "high"
+    LOW = "low"
+
+    def __init__(self, high_deadline=0.05, low_deadline=0.5, clock=None):
+        self.high_deadline = high_deadline
+        self.low_deadline = low_deadline
+        self._clock = clock or time.monotonic
+        self._lanes = {self.HIGH: [], self.LOW: []}
+        self._cancelled = set()
+        self._seq = 0
+
+    def _deadline_for(self, priority):
+        if priority == self.HIGH:
+            return self.high_deadline
+        return self.low_deadline
+
+    def enqueue(self, op, priority=HIGH):
+        """Add `op` to a lane. Returns the operation id."""
+        if priority not in self._lanes:
+            raise ValueError("unknown priority %r" % (priority,))
+        self._seq += 1
+        op_id = self._seq
+        entry = {
+            "id": op_id,
+            "op": op,
+            "priority": priority,
+            "enqueued_at": self._clock(),
+            "deadline": self._deadline_for(priority),
+        }
+        self._lanes[priority].append(entry)
+        return op_id
+
+    def cancel(self, op_id):
+        """Mark an operation cancelled. Returns True if it was still pending."""
+        for lane in self._lanes.values():
+            for entry in lane:
+                if entry["id"] == op_id:
+                    lane.remove(entry)
+                    self._cancelled.add(op_id)
+                    return True
+        self._cancelled.add(op_id)
+        return False
+
+    def is_cancelled(self, op_id):
+        return op_id in self._cancelled
+
+    def expired(self, entry):
+        """True if the entry's per-operation deadline has elapsed."""
+        return (self._clock() - entry["enqueued_at"]) >= entry["deadline"]
+
+    def next_eligible(self):
+        """
+        Pop and return the next pending operation, or None.
+
+        High-priority entries are always considered before low-priority ones.
+        Cancelled entries are skipped. Expired entries are skipped and
+        discarded (their deadline has passed, so they are no longer eligible).
+        """
+        for priority in (self.HIGH, self.LOW):
+            lane = self._lanes[priority]
+            while lane:
+                entry = lane.pop(0)
+                if entry["id"] in self._cancelled:
+                    continue
+                if self.expired(entry):
+                    continue
+                return entry
+        return None
+
+    def pending(self, priority=None):
+        """Number of not-yet-selected entries, optionally for one lane."""
+        if priority is None:
+            return sum(len(lane) for lane in self._lanes.values())
+        return len(self._lanes[priority])
+
 
 class RpcMethodMissing(Exception):
     """The engine doesn't know this method name."""
@@ -96,13 +191,26 @@ class GuitarixRPC:
         self._send_lock = threading.Lock()
         self._stop = threading.Event()
 
+        # one queue per lane, drained HIGH first; the condition lets a
+        # waiting sender be woken when the lane it wants has room
+        self._lanes = {lane: queue.Queue() for lane in LANES}
+        self._lane_cond = threading.Condition()
+        self._lane_thread = None
+        self._lane_stop = threading.Event()
+
     # ---------------------------------------------------------------- lifecycle
 
     def start(self):
         threading.Thread(target=self._supervise, name="gx-rpc", daemon=True).start()
+        self._lane_thread = threading.Thread(target=self._lane_loop, name="gx-rpc-lanes",
+                                             daemon=True)
+        self._lane_thread.start()
 
     def stop(self):
         self._stop.set()
+        self._lane_stop.set()
+        with self._lane_cond:
+            self._lane_cond.notify_all()
         self._close()
 
     def _supervise(self):
@@ -173,19 +281,53 @@ class GuitarixRPC:
                 raise OSError("not connected to guitarix")
             sock.sendall(line)
 
-    def notify(self, method, params=None):
-        """Fire and forget."""
-        self._send(method, params or [])
+    # ---------------------------------------------------------------- lanes
 
-    def call(self, method, params=None, timeout=5.0):
-        """Send a request and wait for its reply."""
+    def _lane_loop(self):
+        """
+        Drain the lanes onto the socket, HIGH before LOW.
+
+        A single thread does the sending, so the ordering rule is simply
+        "look at HIGH first": while anything is pending there, LOW waits.
+        """
+        while not self._lane_stop.is_set():
+            item = None
+            for lane in LANES:
+                try:
+                    item = self._lanes[lane].get_nowait()
+                    break
+                except queue.Empty:
+                    continue
+            if item is None:
+                with self._lane_cond:
+                    self._lane_cond.wait(timeout=0.05)
+                continue
+            method, params, call_id = item
+            try:
+                self._send(method, params, call_id)
+            except OSError as exc:
+                log.warning("guitarix rpc: dropping %r: %s", method, exc)
+
+    def _enqueue(self, lane, method, params, call_id=None):
+        if lane not in self._lanes:
+            raise ValueError("unknown lane %r" % (lane,))
+        self._lanes[lane].put((method, params, call_id))
+        with self._lane_cond:
+            self._lane_cond.notify_all()
+
+    def notify(self, method, params=None, lane=HIGH):
+        """Fire and forget, on `lane` (HIGH by default)."""
+        self._enqueue(lane, method, params or [])
+
+    def call(self, method, params=None, timeout=5.0, lane=HIGH):
+        """Send a request and wait for its reply, on `lane` (HIGH by default)."""
         with self._call_lock:
             # drain a stale reply left behind by a timed-out call
             try:
                 self._replies.get_nowait()
             except queue.Empty:
                 pass
-            self._send(method, params or [], call_id="1")
+            self._enqueue(lane, method, params or [], call_id="1")
             try:
                 reply = self._replies.get(timeout=timeout)
             except queue.Empty:
@@ -262,15 +404,15 @@ class GuitarixRPC:
 
     # ---------------------------------------------------------------- guitarix API
 
-    def get(self, ids):
+    def get(self, ids, lane=HIGH):
         """Read one or more parameter values. Returns {id: value}."""
         if isinstance(ids, str):
             ids = [ids]
-        result = self.call("get", list(ids)) or {}
+        result = self.call("get", list(ids), lane=lane) or {}
         self.values.update(result)
         return result
 
-    def set(self, changes):
+    def set(self, changes, lane=HIGH):
         """
         Write parameters. `changes` is {id: value}.
 
@@ -283,21 +425,21 @@ class GuitarixRPC:
             params.extend([pid, value])
         # Send first: if the transmission raises, the engine never saw the
         # change, so the local cache must not claim it did.
-        self.notify("set", params)
+        self.notify("set", params, lane=lane)
         self.values.update(changes)
 
-    def banks(self):
+    def banks(self, lane=HIGH):
         """[{'name': 'MyBank', 'presets': ['Clean', ...]}, ...]"""
-        return self.call("banks", []) or []
+        return self.call("banks", [], lane=lane) or []
 
-    def set_preset(self, bank, preset):
-        self.notify("setpreset", [bank, preset])
+    def set_preset(self, bank, preset, lane=HIGH):
+        self.notify("setpreset", [bank, preset], lane=lane)
 
     def current_preset(self):
         r = self.get(["system.current_bank", "system.current_preset"])
         return r.get("system.current_bank"), r.get("system.current_preset")
 
-    def parameter_list(self):
+    def parameter_list(self, lane=HIGH):
         """
         Full parameter description from the engine, flattened to:
             {id: {"id","name","type","min","max","step","value"}}
@@ -307,7 +449,7 @@ class GuitarixRPC:
         Enum/FloatEnum wrap an inner IntParameter/FloatParameter, and every
         descriptor carries a nested "Parameter" with the common fields.
         """
-        raw = self.call("parameterlist", [], timeout=15.0) or []
+        raw = self.call("parameterlist", [], timeout=15.0, lane=lane) or []
         out = {}
         for type_name, desc in zip(raw[::2], raw[1::2]):
             info = self._flatten(type_name, desc)
@@ -315,9 +457,9 @@ class GuitarixRPC:
                 out[info["id"]] = info
         return out
 
-    def raw_parameters(self):
+    def raw_parameters(self, lane=HIGH):
         """The unflattened descriptors, {id: (type, descriptor)}, for inspection."""
-        raw = self.call("parameterlist", [], timeout=15.0) or []
+        raw = self.call("parameterlist", [], timeout=15.0, lane=lane) or []
         out = {}
         for type_name, desc in zip(raw[::2], raw[1::2]):
             info = self._flatten(type_name, desc)
@@ -396,37 +538,37 @@ class GuitarixRPC:
 
     # ------------------------------------------------------------ presets
 
-    def _preset_notify(self, action, params):
+    def _preset_notify(self, action, params, lane=HIGH):
         name = PRESET_METHODS.get(action)
         if not name:
             raise RpcMethodMissing(action)
-        self.notify(name, params)
+        self.notify(name, params, lane=lane)
 
-    def preset_save_current(self):
+    def preset_save_current(self, lane=HIGH):
         """Write the live settings back into the preset that's loaded."""
-        return self._preset_notify("save_current", [])
+        return self._preset_notify("save_current", [], lane=lane)
 
-    def preset_save_as(self, bank, name):
+    def preset_save_as(self, bank, name, lane=HIGH):
         """Store the live settings as a new preset (or overwrite an existing one)."""
-        return self._preset_notify("save_as", [bank, name])
+        return self._preset_notify("save_as", [bank, name], lane=lane)
 
-    def preset_rename(self, bank, old, new):
-        return self._preset_notify("rename", [bank, old, new])
+    def preset_rename(self, bank, old, new, lane=HIGH):
+        return self._preset_notify("rename", [bank, old, new], lane=lane)
 
-    def preset_delete(self, bank, name):
-        return self._preset_notify("delete", [bank, name])
+    def preset_delete(self, bank, name, lane=HIGH):
+        return self._preset_notify("delete", [bank, name], lane=lane)
 
-    def bank_create(self, name):
-        return self._preset_notify("new_bank", [name])
+    def bank_create(self, name, lane=HIGH):
+        return self._preset_notify("new_bank", [name], lane=lane)
 
-    def bank_delete(self, name):
+    def bank_delete(self, name, lane=HIGH):
         """Removes the bank and every preset in it."""
-        return self._preset_notify("delete_bank", [name])
+        return self._preset_notify("delete_bank", [name], lane=lane)
 
-    def preset_move(self, src_bank, name, dst_bank, new_name):
-        return self._preset_notify("move", [src_bank, name, dst_bank, new_name])
+    def preset_move(self, src_bank, name, dst_bank, new_name, lane=HIGH):
+        return self._preset_notify("move", [src_bank, name, dst_bank, new_name], lane=lane)
 
-    def probe(self, method, timeout=2.0):
+    def probe(self, method, timeout=2.0, lane=HIGH):
         """
         Classify a method name. Sends it with no arguments and reads what
         comes back:
@@ -440,7 +582,7 @@ class GuitarixRPC:
         notifications rather than calls.
         """
         try:
-            self.call(method, [], timeout=timeout)
+            self.call(method, [], timeout=timeout, lane=lane)
         except RpcMethodMissing:
             return "missing"
         except TimeoutError:

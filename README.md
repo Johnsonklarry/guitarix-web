@@ -370,6 +370,15 @@ radio station, so:
   drifts more than three seconds behind, it jumps forward to the live edge;
 - if the stream drops, it reconnects on its own a few times before giving up.
 
+The page reports its own playback buffer back to the server as the
+**`playback_buffer`** event: how much audio the `<audio>` element is holding,
+in seconds, sent as it changes. The server keeps that figure per listener and
+uses it as the adaptive budget for shedding -- a listener whose buffer is
+already deep is allowed to queue more here, and one that is close to the live
+edge is shed sooner, so the queue bound follows the listener rather than a
+fixed half-second constant. `Monitor(sources, lag_budget=...)` sets the
+starting budget; the default is half a second.
+
 The encoder only runs while someone is listening, and runs at a lower
 priority than guitarix (`nice`), so it can't take CPU from the amp. Listening
 taps each source in JACK without disturbing its existing connections.

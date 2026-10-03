@@ -12,7 +12,7 @@ class TestAdaptiveShedding(unittest.TestCase):
         monitor.report_buffer_time(None)
 
     def test_default_budget_when_no_report(self):
-        self.assertEqual(monitor.effective_budget(), monitor.LAG_BUDGET)
+        self.assertEqual(monitor.effective_budget(), monitor.DEFAULT_LAG_BUDGET)
 
     def test_effective_budget_clamps(self):
         monitor.report_buffer_time(0.05)
