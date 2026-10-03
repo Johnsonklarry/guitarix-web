@@ -39,8 +39,10 @@ CHUNK = 1024                    # read1() size: ~51 ms of audio, never wait to f
 # Lag budget: the most audio a listener may have queued here, in seconds. A slower
 # listener loses its oldest whole MP3 frames until it is back inside the budget.
 # This bounds only the queue in this process, not ffmpeg/browser/proxy buffering.
-LAG_BUDGET = 0.5
-MAX_LAG_BYTES = int(LAG_BUDGET * BYTES_PER_SEC)
+# It is not a fixed constant: the bound is derived from the adaptive budget the
+# caller configures, so a listener can be given more or less slack than the
+# default without editing this module.
+DEFAULT_LAG_BUDGET = 0.5
 STDERR_TAIL = 2048              # bytes of encoder stderr kept for the log
 
 _KBPS = (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0)   # MPEG-1 layer III
@@ -85,12 +87,12 @@ def _take_frames(pending):
     return out
 
 
-def _offer(q, item):
+def _offer(q, item, max_lag_bytes):
     """Queue `item`, first shedding the oldest items until q is inside the lag budget."""
     while True:
         with q.mutex:
             queued = sum(len(c) for c in q.queue if c)
-        if queued + len(item) <= MAX_LAG_BYTES:
+        if queued + len(item) <= max_lag_bytes:
             break
         try:
             q.get_nowait()                         # drop the oldest: stay near live
@@ -113,8 +115,10 @@ def encoder_args():
 
 
 class Monitor:
-    def __init__(self, sources):
+    def __init__(self, sources, lag_budget=DEFAULT_LAG_BUDGET):
         self.sources = sources                    # () -> [[port, ...], ...]
+        self.lag_budget = lag_budget              # seconds of audio a listener may queue
+        self.max_lag_bytes = int(lag_budget * BYTES_PER_SEC)
         self._listeners = set()
         self._proc = None
         self._lock = threading.Lock()
@@ -187,7 +191,7 @@ class Monitor:
         """
         Encoder output, as whole MP3 frames, to the listeners of this encoder
         run (`owned`). A slow one loses its oldest audio, never blocks, and is
-        kept within LAG_BUDGET seconds.
+        kept within the adaptive lag budget.
         """
         tail = bytearray()
 
@@ -214,7 +218,7 @@ class Monitor:
                 with self._lock:
                     listeners = list(owned)
                 for q in listeners:
-                    _offer(q, item)
+                    _offer(q, item, self.max_lag_bytes)
         drainer.join(timeout=1)
         err = bytes(tail).decode("utf-8", "replace").strip()
         if err:
