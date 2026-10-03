@@ -12,6 +12,8 @@ needed: the engine is a fake that records bank_create calls.
 import os
 import socket
 import sys
+import shutil
+import atexit
 import tempfile
 import threading
 import time
@@ -42,6 +44,7 @@ logging.disable(logging.WARNING)
 import recorder                      # noqa: E402
 import backing as backing_mod        # noqa: E402
 recorder.RECORDINGS_DIR = tempfile.mkdtemp(prefix="gxweb-rec-")
+atexit.register(shutil.rmtree, recorder.RECORDINGS_DIR, True)   # recordings are GBs: never leave them in TMPDIR
 backing_mod.BACKING_DIR = tempfile.mkdtemp(prefix="gxweb-backing-")
 
 import app as A                      # noqa: E402

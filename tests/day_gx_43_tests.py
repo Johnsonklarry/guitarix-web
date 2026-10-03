@@ -18,6 +18,8 @@ connect handler, which must emit the reduced broadcast snapshot.
 import os
 import subprocess
 import sys
+import shutil
+import atexit
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,6 +61,7 @@ def child(mode):
     import recorder
     import backing as backing_mod
     recorder.RECORDINGS_DIR = tempfile.mkdtemp(prefix="gxweb-rec-")
+    atexit.register(shutil.rmtree, recorder.RECORDINGS_DIR, True)   # recordings are GBs: never leave them in TMPDIR
     backing_mod.BACKING_DIR = tempfile.mkdtemp(prefix="gxweb-backing-")
     import app as A
     A.rec.dir, A.backing.dir = recorder.RECORDINGS_DIR, backing_mod.BACKING_DIR

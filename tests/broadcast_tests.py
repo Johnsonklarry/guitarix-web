@@ -19,6 +19,8 @@ import io
 import os
 import socket
 import sys
+import shutil
+import atexit
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +49,7 @@ logging.disable(logging.WARNING)     # the scenarios provoke refusals on purpose
 import recorder                      # noqa: E402
 import backing as backing_mod        # noqa: E402
 recorder.RECORDINGS_DIR = tempfile.mkdtemp(prefix="gxweb-rec-")
+atexit.register(shutil.rmtree, recorder.RECORDINGS_DIR, True)   # recordings are GBs: never leave them in TMPDIR
 backing_mod.BACKING_DIR = tempfile.mkdtemp(prefix="gxweb-backing-")
 
 import app as A                      # noqa: E402
