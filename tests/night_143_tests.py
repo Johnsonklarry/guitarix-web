@@ -7,6 +7,8 @@ Regression tests for the login/logout endpoints (part 1 of #16).
 
 import os
 import sys
+import shutil
+import atexit
 import tempfile
 import unittest
 
@@ -23,6 +25,7 @@ sys.path[:0] = [os.path.join(HERE, "stubs"), ROOT]
 import recorder                      # noqa: E402
 import backing as backing_mod        # noqa: E402
 recorder.RECORDINGS_DIR = tempfile.mkdtemp(prefix="gxweb-rec-")
+atexit.register(shutil.rmtree, recorder.RECORDINGS_DIR, True)   # recordings are GBs: never leave them in TMPDIR
 backing_mod.BACKING_DIR = tempfile.mkdtemp(prefix="gxweb-backing-")
 
 import app as A                      # noqa: E402
