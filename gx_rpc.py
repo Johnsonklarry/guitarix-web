@@ -33,6 +33,95 @@ import time
 log = logging.getLogger("gx_rpc")
 
 
+class PriorityLaneQueue:
+    """
+    Priority-lane queue for RPC operations on a single connection.
+
+    Two classes of work (high and low) are kept in separate FIFO lanes.
+    Selection always drains the high lane before the low lane, so a pending
+    high-priority operation is never overtaken by a low-priority one.
+
+    Every operation carries a per-operation deadline (seconds from enqueue).
+    This class performs no socket I/O: it is driven entirely by an injected
+    clock, so it can be exercised with a fake clock in tests.
+    """
+
+    HIGH = "high"
+    LOW = "low"
+
+    def __init__(self, high_deadline=0.05, low_deadline=0.5, clock=None):
+        self.high_deadline = high_deadline
+        self.low_deadline = low_deadline
+        self._clock = clock or time.monotonic
+        self._lanes = {self.HIGH: [], self.LOW: []}
+        self._cancelled = set()
+        self._seq = 0
+
+    def _deadline_for(self, priority):
+        if priority == self.HIGH:
+            return self.high_deadline
+        return self.low_deadline
+
+    def enqueue(self, op, priority=HIGH):
+        """Add `op` to a lane. Returns the operation id."""
+        if priority not in self._lanes:
+            raise ValueError("unknown priority %r" % (priority,))
+        self._seq += 1
+        op_id = self._seq
+        entry = {
+            "id": op_id,
+            "op": op,
+            "priority": priority,
+            "enqueued_at": self._clock(),
+            "deadline": self._deadline_for(priority),
+        }
+        self._lanes[priority].append(entry)
+        return op_id
+
+    def cancel(self, op_id):
+        """Mark an operation cancelled. Returns True if it was still pending."""
+        for lane in self._lanes.values():
+            for entry in lane:
+                if entry["id"] == op_id:
+                    lane.remove(entry)
+                    self._cancelled.add(op_id)
+                    return True
+        self._cancelled.add(op_id)
+        return False
+
+    def is_cancelled(self, op_id):
+        return op_id in self._cancelled
+
+    def expired(self, entry):
+        """True if the entry's per-operation deadline has elapsed."""
+        return (self._clock() - entry["enqueued_at"]) >= entry["deadline"]
+
+    def next_eligible(self):
+        """
+        Pop and return the next pending operation, or None.
+
+        High-priority entries are always considered before low-priority ones.
+        Cancelled entries are skipped. Expired entries are skipped and
+        discarded (their deadline has passed, so they are no longer eligible).
+        """
+        for priority in (self.HIGH, self.LOW):
+            lane = self._lanes[priority]
+            while lane:
+                entry = lane.pop(0)
+                if entry["id"] in self._cancelled:
+                    continue
+                if self.expired(entry):
+                    continue
+                return entry
+        return None
+
+    def pending(self, priority=None):
+        """Number of not-yet-selected entries, optionally for one lane."""
+        if priority is None:
+            return sum(len(lane) for lane in self._lanes.values())
+        return len(self._lanes[priority])
+
+
 class RpcMethodMissing(Exception):
     """The engine doesn't know this method name."""
 
