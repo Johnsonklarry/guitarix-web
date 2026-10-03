@@ -27,6 +27,8 @@ import subprocess
 import threading
 import time
 
+from flask import Response
+
 import jackutil
 
 log = logging.getLogger("monitor")
@@ -44,6 +46,22 @@ CHUNK = 1024                    # read1() size: ~51 ms of audio, never wait to f
 # default without editing this module.
 DEFAULT_LAG_BUDGET = 0.5
 STDERR_TAIL = 2048              # bytes of encoder stderr kept for the log
+
+# PCM transport (issue #46, part 2): raw s16le straight off JACK, no encoder,
+# no container, nothing that buffers. The browser's AudioWorklet plays it.
+PCM_RATE = 48000
+PCM_CHANNELS = 2
+PCM_FRAMES = 256                # per chunk: 5.3 ms at 48k
+PCM_CHUNK = PCM_FRAMES * PCM_CHANNELS * 2   # bytes, s16le
+PCM_CONTENT_TYPE = "application/octet-stream"
+PCM_HEADERS = {
+    "Content-Type": PCM_CONTENT_TYPE,
+    "Cache-Control": "no-store",
+    "X-Audio-Rate": str(PCM_RATE),
+    "X-Audio-Channels": str(PCM_CHANNELS),
+    "X-Audio-Frames": str(PCM_FRAMES),
+    "X-Audio-Format": "s16le",
+}
 
 _KBPS = (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0)   # MPEG-1 layer III
 _HZ = (44100, 48000, 32000, 0)
@@ -101,6 +119,17 @@ def _offer(q, item, max_lag_bytes):
     q.put_nowait(item)
 
 
+def pcm_args():
+    """Raw PCM straight off JACK. No container, no encoder, nothing to buffer."""
+    args = [FFMPEG, "-hide_banner", "-loglevel", "error",
+            "-f", "jack", "-i", CLIENT,
+            "-ac", str(PCM_CHANNELS), "-ar", str(PCM_RATE),
+            "-f", "s16le", "-"]
+    if shutil.which("nice"):
+        args = ["nice", "-n", "10"] + args        # the amp's realtime work comes first
+    return args
+
+
 def encoder_args():
     args = [FFMPEG, "-hide_banner", "-loglevel", "error",
             "-f", "jack", "-i", CLIENT, "-ac", "2",
@@ -130,6 +159,40 @@ class Monitor:
     def status(self):
         return {"listeners": len(self._listeners),
                 "running": self._proc is not None and self._proc.poll() is None}
+
+    def pcm(self):
+        """
+        A generator of raw s16le PCM, for one listener, for as long as they
+        stay. Chunks are exactly PCM_CHUNK bytes so the client can frame them
+        without a container; a short read at the end is padded, never sent
+        short, so the client's frame arithmetic never has to guess.
+        """
+        proc = None
+        try:
+            proc = subprocess.Popen(pcm_args(), stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            log.error("couldn't start the PCM encoder: %s", exc)
+            return
+        try:
+            while True:
+                data = _read1(proc.stdout, PCM_CHUNK) if proc.stdout else b""
+                if not data:
+                    return
+                if len(data) < PCM_CHUNK:
+                    data += b"\x00" * (PCM_CHUNK - len(data))
+                yield data
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+    def pcm_response(self):
+        """A Flask streaming Response of PCM, with the framing headers set."""
+        return Response(self.pcm(), headers=dict(PCM_HEADERS))
 
     def listen(self):
         """A generator of MP3 bytes, for one listener, for as long as they stay."""
