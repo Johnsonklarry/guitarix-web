@@ -780,7 +780,7 @@ def client_set_param(msg):
     if not pid:
         return
     try:
-        rpc.set({pid: value})
+        rpc.set({pid: value}, lane=gx_rpc.HIGH)
     except OSError as exc:
         log.warning("set %s failed: %s", pid, exc)
         return
@@ -797,7 +797,7 @@ def client_set_preset(msg):
     if not bank or not preset:
         return
     try:
-        rpc.set_preset(bank, preset)
+        rpc.set_preset(bank, preset, lane=gx_rpc.HIGH)
     except OSError as exc:
         log.warning("preset load failed: %s", exc)
         return
@@ -1402,7 +1402,7 @@ def client_import_save_all(msg):
             changes, _ = _load_base_and_plan(preset, base, params, others_off)
             _apply(changes)
             _ensure_bank(bank)
-            rpc.preset_save_as(bank, preset["name"])
+            rpc.preset_save_as(bank, preset["name"], lane=gx_rpc.LOW)
             _wait_for(lambda m, b=bank, n=preset["name"]: n in m.get(b, []),
                       "%s didn't save, so the rest weren't tried." % preset["name"])
 
@@ -1540,11 +1540,12 @@ def _loaded_now():
         return state.bank, state.preset
 
 
-def _snapshot_state():
+def _snapshot_state(lane=gx_rpc.HIGH):
     """Everything that's playing now: the loaded preset and every setting."""
     params = _engine_parameters() or {}
     prev = _loaded_now()
-    return {"prev": prev, "values": rpc.get(presets_io.export_ids(params)) if params else {}}
+    return {"prev": prev,
+            "values": rpc.get(presets_io.export_ids(params), lane=lane) if params else {}}
 
 
 def _restore_state(snap):
@@ -1610,7 +1611,7 @@ def client_export_start(msg):
     def run():
         snap, ok, out = None, False, None
         try:
-            snap = _snapshot_state()
+            snap = _snapshot_state(lane=gx_rpc.LOW)
             if source == "recorded":
                 path = rec._resolve(stem + ".json")
                 if not path:
