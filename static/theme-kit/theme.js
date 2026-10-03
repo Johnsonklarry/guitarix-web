@@ -5,12 +5,19 @@
   var storageKey = "theme-kit-choice";
   var themes = [
     { id: "bag-end", name: "Fireside" },
+    { id: "middle-earth", name: "Middle-earth" },
     { id: "plex-amber", name: "Amber" },
     { id: "amp-lamp", name: "Amp lamp" },
     { id: "studio-glass", name: "Studio" },
     { id: "mission-control", name: "Console" },
     { id: "light", name: "Light" },
-    { id: "dark", name: "Dark" }
+    { id: "dark", name: "Dark" },
+    { id: "shire", name: "The Shire" },
+    { id: "pipeweed", name: "Pipeweed" },
+    { id: "woodland-realm", name: "Woodland Realm" },
+    { id: "minas-tirith", name: "White City" },
+    { id: "mount-doom", name: "Mount Doom" },
+    { id: "balrog", name: "Balrog" }
   ];
   var listeners = [];
   var choice = null;
@@ -112,6 +119,9 @@
       select.appendChild(option);
     });
 
+    wrapper.className = "tk-bar";
+    select.className = "tk-tap";
+    button.className = "tk-tap";
     button.type = "button";
     button.textContent = "OLED mode";
 
