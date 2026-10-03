@@ -46,6 +46,23 @@ CHUNK = 1024                    # read1() size: ~51 ms of audio, never wait to f
 # default without editing this module.
 DEFAULT_LAG_BUDGET = 0.5
 STDERR_TAIL = 2048              # bytes of encoder stderr kept for the log
+MIN_LAG_BUDGET = 0.2
+MAX_LAG_BUDGET = 2.0
+_reported_buffer_time = None    # client-reported playback buffer (#232); None = use the listener's own budget
+
+
+def report_buffer_time(seconds):
+    """Update the client-reported playback buffer time (in seconds)."""
+    global _reported_buffer_time
+    _reported_buffer_time = seconds
+
+
+def effective_budget(default=DEFAULT_LAG_BUDGET):
+    """The lag budget in seconds: the reported buffer time clamped to bounds, else `default`."""
+    if _reported_buffer_time is None:
+        return default
+    return max(MIN_LAG_BUDGET, min(MAX_LAG_BUDGET, _reported_buffer_time))
+
 
 # PCM transport (issue #46, part 2): raw s16le straight off JACK, no encoder,
 # no container, nothing that buffers. The browser's AudioWorklet plays it.
@@ -105,8 +122,10 @@ def _take_frames(pending):
     return out
 
 
-def _offer(q, item, max_lag_bytes):
+def _offer(q, item, max_lag_bytes=None):
     """Queue `item`, first shedding the oldest items until q is inside the lag budget."""
+    if max_lag_bytes is None or _reported_buffer_time is not None:   # a reported buffer overrides the listener budget (#232)
+        max_lag_bytes = int(effective_budget() * BYTES_PER_SEC)
     while True:
         with q.mutex:
             queued = sum(len(c) for c in q.queue if c)
