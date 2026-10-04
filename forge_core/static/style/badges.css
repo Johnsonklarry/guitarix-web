@@ -1,0 +1,38 @@
+/* Status badges: text label plus status colour, scoped under .forge-ui.
+   Colours come only from theme-kit/themes.css tokens, so every theme and OLED variant applies. */
+.forge-ui .forge-badge {
+  --badge-color: var(--idle);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--badge-color);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--badge-color) 18%, var(--surface));
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.forge-ui .forge-badge::before {
+  content: "";
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background: var(--badge-color);
+}
+
+.forge-ui .forge-badge--ok { --badge-color: var(--ok); }
+.forge-ui .forge-badge--warn { --badge-color: var(--warn); }
+.forge-ui .forge-badge--fault { --badge-color: var(--fault); }
+.forge-ui .forge-badge--info { --badge-color: var(--info); }
+.forge-ui .forge-badge--idle { --badge-color: var(--idle); }
+
+/* OLED: black surfaces, hairline edges, no glow fills */
+html[data-oled="true"] .forge-ui .forge-badge {
+  background: transparent;
+}

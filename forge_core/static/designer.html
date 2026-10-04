@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Forge layout designer</title>
+  <link rel='stylesheet' href='./static/theme-kit/themes.css'>
+  <script src='./static/theme-kit/theme.js'></script>
+  <script defer src='./static/theme-kit/gamepad.js'></script>
+  <link rel='stylesheet' href='./static/layout.css'>
+  <link rel='stylesheet' href='./static/designer.css'>
+  <script defer src='./static/layout.js'></script>
+  <script defer src='./static/designer.js'></script>
+</head>
+<body>
+  <header class='designer-toolbar'>
+    <h1>Layout designer</h1>
+    <span id='dashboard-label'></span>
+    <label for='preset-picker'>Preset</label>
+    <select id='preset-picker' aria-label='Preset'></select>
+    <button id='new-preset' type='button'>New</button>
+    <button id='duplicate-preset' type='button'>Duplicate</button>
+    <button id='save-preset' type='button'>Save</button>
+    <button id='delete-preset' type='button'>Delete</button>
+    <button id='set-active' type='button'>Set active</button>
+    <label for='preset-name'>Name</label>
+    <input id='preset-name' type='text' maxlength='80' required>
+    <label for='columns'>Columns</label>
+    <input id='columns' type='number' min='1' max='24' step='1' inputmode='numeric'>
+    <label for='row-height'>Row height (px)</label>
+    <input id='row-height' type='number' min='20' max='400' step='1' inputmode='numeric'>
+    <button id='preview-toggle' type='button' aria-expanded='false' aria-controls='preview-panel'>Preview</button>
+  </header>
+  <div id='status' role='status' aria-live='polite' aria-atomic='true'></div>
+  <div id='errors' role='alert' hidden></div>
+  <main class='designer-workspace'>
+    <aside class='designer-panel palette-panel' aria-labelledby='palette-heading'>
+      <h2 id='palette-heading'>Tile palette</h2>
+      <label for='palette-search'>Search tiles</label>
+      <input id='palette-search' type='search' autocomplete='off'>
+      <p class='hint'>Drag a tile onto the grid, or focus it and press Enter to place it.</p>
+      <div id='palette' class='palette-list'></div>
+    </aside>
+    <section class='designer-panel canvas-panel' aria-labelledby='canvas-heading'>
+      <h2 id='canvas-heading'>Grid</h2>
+      <p class='hint'>Focus a tile to select it. Arrow keys move; Shift + arrow keys resize; Delete removes.</p>
+      <div class='grid-scroll'><div id='designer-grid' aria-label='Layout grid'></div></div>
+    </section>
+    <aside class='designer-panel options-panel' aria-labelledby='options-heading'>
+      <h2 id='options-heading'>Tile options</h2>
+      <p id='options-empty'>Select a tile to edit its options.</p>
+      <form id='options-form' hidden></form>
+    </aside>
+  </main>
+  <section id='preview-panel' class='designer-panel preview-panel' aria-labelledby='preview-heading' hidden>
+    <h2 id='preview-heading'>Preview</h2>
+    <div id='preview-grid'></div>
+  </section>
+</body>
+</html>

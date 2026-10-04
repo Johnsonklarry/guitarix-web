@@ -1,0 +1,43 @@
+/* Phone width adjustments for tables */
+@media (max-width: 480px) {
+  /* Ensure table controls are fully visible and tappable */
+  .table-controls {
+    overflow: auto;
+    white-space: nowrap;
+  }
+}
+
+/* forge_core/static/style/tables.css
+   Shared table component classes.
+   Uses theme surface, text, and edge tokens.
+*/
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--edge);
+}
+
+.table__caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--space-2);
+  font-size: var(--text-base);
+  color: var(--text);
+}
+
+.table--striped tbody tr:nth-child(even) {
+  background: var(--surface-2);
+}
+
+.table--bordered th,
+.table--bordered td {
+  border: 1px solid var(--edge);
+}
+
+.table-wrap {
+  overflow-x: auto;
+  display: block;
+}

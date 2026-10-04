@@ -1,0 +1,65 @@
+.card {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+
+.card__header {
+  background: var(--surface-2);
+  color: var(--text);
+  border-bottom: 1px solid var(--edge);
+  padding: var(--space-2) var(--space-3);
+}
+
+.card__body {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--edge);
+  padding: var(--space-3);
+}
+
+.card__footer {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-top: 1px solid var(--edge);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* Hobbit-door round tile cards and mobile-first tile grid */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(var(--tap-min, 44px), 140px), 1fr));
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.card--hobbit-door {
+  border-radius: 50%;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-width: var(--tap-min, 44px);
+  min-height: var(--tap-min, 44px);
+  padding: var(--space-2);
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.card--hobbit-door::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 12%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translateY(-50%);
+  box-shadow: 0 0 2px #000a;
+}

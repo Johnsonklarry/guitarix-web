@@ -1,0 +1,93 @@
+.forge-grid {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.forge-grid-stacked {
+  grid-template-columns: 1fr !important;
+}
+
+.forge-tile {
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.forge-tile-title {
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 500;
+  padding: var(--space-2);
+  position: relative;
+  z-index: 1;
+}
+
+.forge-tile-body {
+  overflow: auto;
+  padding: var(--space-2);
+}
+
+.forge-tile-placeholder {
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-style: italic;
+  text-align: center;
+}
+
+.forge-tile-unavailable {
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: var(--space-2);
+}
+
+/*
+ * Navigation markup hooks (scoped under .forge-ui):
+ *   <div class="forge-ui">
+ *     <nav class="forge-nav" aria-label="...">
+ *       <a class="forge-nav-link" href="..." aria-current="page">Current</a>
+ *       <a class="forge-nav-link" href="...">Other</a>
+ *     </nav>
+ *   </div>
+ * Active state: set aria-current="page" on the active .forge-nav-link
+ * (preferred, also announced by assistive tech) or add the .is-active class.
+ * Focus: keyboard focus is shown with a :focus-visible outline.
+ * Touch: every .forge-nav-link is at least 44px x 44px.
+ */
+.forge-ui .forge-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-2);
+}
+
+.forge-ui .forge-nav-link {
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  display: inline-flex;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  min-height: 44px;
+  min-width: 44px;
+  padding: var(--space-1) var(--space-2);
+  text-decoration: none;
+}
+
+.forge-ui .forge-nav-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.forge-ui .forge-nav-link[aria-current="page"],
+.forge-ui .forge-nav-link.is-active {
+  background: var(--surface-2);
+  font-weight: 600;
+}
