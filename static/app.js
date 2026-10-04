@@ -885,6 +885,13 @@ function setBusy(btn, busy) {
 /* Restart a one-shot CSS animation, even if it's already running. */
 function flash(el, cls) {
   if (!el) return;
+  // Someone who asked for less motion gets none of this: drop the class and
+  // leave it off, so a highlight can't be left stuck on the element either.
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.classList.remove(cls);
+    clearTimeout(el['_t_' + cls]);
+    return;
+  }
   el.classList.remove(cls);
   void el.offsetWidth;                    // reflow, so re-adding restarts it
   el.classList.add(cls);
@@ -1250,8 +1257,12 @@ function renderTakes(items) {
         if (loopingNow() === item.name) run('backing_stop', {}, loopBtn);
         else run('backing_play', { name: item.name, kind: 'take', loop: true }, loopBtn);
       });
-      actions.appendChild(loopBtn);
-      actions.appendChild(mini('More', function () { toggleMore(tr, moreBox); }));
+      const moreBtn = mini('More', function () {
+        moreBtn.setAttribute('aria-expanded', String(toggleMore(tr, moreBox)));
+      });
+      moreBtn.setAttribute('aria-expanded', 'false');
+      moreBtn.setAttribute('aria-label', 'More actions for ' + item.name);
+      actions.appendChild(moreBtn);
       const rename = mini('Rename', function () {
         ask({ title: 'Rename take', label: 'New name', ok: 'Rename',
               value: item.name.replace(/\.[^.]+$/, '') })
@@ -1319,6 +1330,7 @@ function togglePlay(row, item, btn, quiet) {
   audio.preload = 'none';
   audio.src = mediaUrl('take', item.name);
   audio.dataset.take = item.name;
+  audio.setAttribute('aria-label', 'Playback for ' + item.name);
   td.appendChild(audio);
   tr.appendChild(td);
   row.after(tr);
@@ -1388,7 +1400,7 @@ function loadTakeSettings(filename) {
 
 function toggleMore(row, box) {
   const next = row.nextElementSibling;
-  if (next && next.classList.contains('takes__more')) { next.remove(); return; }
+  if (next && next.classList.contains('takes__more')) { next.remove(); return false; }
   const tr = document.createElement('tr');
   tr.className = 'takes__more';
   const td = document.createElement('td');
@@ -1396,6 +1408,7 @@ function toggleMore(row, box) {
   td.appendChild(box);
   tr.appendChild(td);
   row.after(tr);
+  return true;
 }
 
 function loopingNow() {
