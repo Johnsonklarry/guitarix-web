@@ -4,8 +4,8 @@
   var root = document.documentElement;
   var storageKey = "theme-kit-v2";
   var legacyStorageKey = "theme-kit-choice";
-  // native: the look the theme was drawn in (no data-mode = that look). Only the two
-  // daytime themes are light-native; every other theme is dark-native.
+  // native: the look the theme was drawn in (no data-mode = that look). Only the three
+  // daytime themes (shire, minas-tirith, bag-end-doorway) are light-native; every other theme is dark-native.
   var themes = [
     { id: "bag-end", name: "Fireside", native: "dark" },
     { id: "middle-earth", name: "Middle-earth", native: "dark" },
@@ -18,7 +18,8 @@
     { id: "woodland-realm", name: "Woodland Realm", native: "dark" },
     { id: "minas-tirith", name: "White City", native: "light" },
     { id: "mount-doom", name: "Mount Doom", native: "dark" },
-    { id: "balrog", name: "Balrog", native: "dark" }
+    { id: "balrog", name: "Balrog", native: "dark" },
+    { id: "bag-end-doorway", name: "Bag End Doorway", native: "light" }
   ];
   var modes = ["light", "dark", "oled", "system"];
   var modeNames = { light: "Light", dark: "Dark", oled: "OLED", system: "System" };
@@ -26,6 +27,7 @@
   var legacyThemeModes = { light: "light", dark: "dark" };
   var listeners = [];
   var choice = null;
+  var hiddenIds = readHidden();
   var colorPreference = window.matchMedia
     ? window.matchMedia("(prefers-color-scheme: dark)")
     : null;
@@ -95,6 +97,52 @@
     } catch (error) {
       // The current page can still use the selected theme.
     }
+  }
+
+  function readHidden() {
+    var stored = readStorage("theme-kit-hidden");
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(function (id, index) {
+      return validId(id) && stored.indexOf(id) === index;
+    });
+  }
+
+  function hidden() {
+    return hiddenIds.slice();
+  }
+
+  function visibleThemes() {
+    return themes.filter(function (theme) {
+      return hiddenIds.indexOf(theme.id) === -1;
+    });
+  }
+
+  function hiddenChanged() {
+    try {
+      window.localStorage.setItem("theme-kit-hidden", JSON.stringify(hiddenIds));
+    } catch (error) {
+      // Hiding still works on the current page when storage is unavailable.
+    }
+    document.dispatchEvent(new CustomEvent("themekit:hidden", { detail: hidden() }));
+  }
+
+  function hide(id) {
+    if (!validId(id)) throw new RangeError("Unknown theme: " + id);
+    if (hiddenIds.indexOf(id) === -1 && visibleThemes().length > 1) {
+      hiddenIds.push(id);
+      hiddenChanged();
+    }
+    return hidden();
+  }
+
+  function unhide(id) {
+    if (!validId(id)) throw new RangeError("Unknown theme: " + id);
+    var index = hiddenIds.indexOf(id);
+    if (index !== -1) {
+      hiddenIds.splice(index, 1);
+      hiddenChanged();
+    }
+    return hidden();
   }
 
   function notify() {
@@ -169,47 +217,117 @@
     var wrapper = document.createElement("div");
     var label = document.createElement("label");
     var select = document.createElement("select");
-    var group = document.createElement("div");
-    var groupLabel = document.createElement("span");
+    var group = document.createElement("fieldset");
+    var groupLabel = document.createElement("legend");
     var selectId = "theme-kit-select-" + (++switcherCount);
-    var groupLabelId = "theme-kit-mode-label-" + switcherCount;
-    var buttons = [];
+    var modeName = "tk-mode-" + switcherCount;
+    var radios = [];
+    var details = document.createElement("details");
+    var summary = document.createElement("summary");
+    var checkboxes = [];
 
     label.setAttribute("for", selectId);
     label.textContent = "Theme";
     select.id = selectId;
+
+    summary.textContent = "Manage themes…";
+    summary.style.minHeight = "44px";
+    summary.style.color = "var(--text)";
+    details.appendChild(summary);
     themes.forEach(function (theme) {
-      var option = document.createElement("option");
-      option.value = theme.id;
-      option.textContent = theme.name;
-      select.appendChild(option);
+      var row = document.createElement("label");
+      var checkbox = document.createElement("input");
+      var text = document.createElement("span");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.minHeight = "44px";
+      row.style.color = "var(--text)";
+      checkbox.type = "checkbox";
+      checkbox.style.minWidth = "44px";
+      checkbox.style.minHeight = "44px";
+      checkbox.setAttribute("aria-label", "Show " + theme.name);
+      text.textContent = "Show " + theme.name;
+      checkbox.addEventListener("change", function () {
+        if (checkbox.checked) unhide(theme.id);
+        else hide(theme.id);
+        update(get());
+      });
+      row.appendChild(checkbox);
+      row.appendChild(text);
+      details.appendChild(row);
+      checkboxes.push({ id: theme.id, checkbox: checkbox });
     });
 
-    groupLabel.id = groupLabelId;
     groupLabel.textContent = "Mode";
     group.className = "tk-modes";
-    group.setAttribute("role", "group");
-    group.setAttribute("aria-labelledby", groupLabelId);
+    group.appendChild(groupLabel);
     modes.forEach(function (mode) {
       if (!validMode(mode)) return; // "system" needs matchMedia
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "tk-tap";
-      button.textContent = modeNames[mode];
-      button.setAttribute("data-mode", mode);
-      button.setAttribute("aria-pressed", "false");
-      button.addEventListener("click", function () { setMode(mode); });
-      group.appendChild(button);
-      buttons.push(button);
+      var label = document.createElement("label");
+      var radio = document.createElement("input");
+      var face = document.createElement("span");
+      var text = document.createElement("span");
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      var shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      var icons = {
+        light: "M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z",
+        dark: "M20.3 15.6A8.5 8.5 0 0 1 8.4 3.7 8.5 8.5 0 1 0 20.3 15.6Z",
+        oled: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 4 .8 2.2L15 9l-2.2.8L12 12l-.8-2.2L9 9l2.2-.8L12 6Z",
+        system: "M12 2a10 10 0 1 0 0 20V2Zm0 0a10 10 0 0 1 0 20"
+      };
+      label.className = "tk-mode";
+      label.setAttribute("data-mode", mode);
+      radio.type = "radio";
+      radio.name = modeName;
+      radio.value = mode;
+      radio.setAttribute("aria-label", modeNames[mode]);
+      radio.addEventListener("change", function () {
+        if (radio.checked) setMode(mode);
+      });
+      face.className = "tk-mode-face";
+      face.setAttribute("aria-hidden", "true");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("width", "20");
+      svg.setAttribute("height", "20");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "1.8");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      shape.setAttribute("d", icons[mode]);
+      svg.appendChild(shape);
+      face.appendChild(svg);
+      text.className = "tk-mode-text";
+      text.textContent = modeNames[mode];
+      label.appendChild(radio);
+      label.appendChild(face);
+      label.appendChild(text);
+      group.appendChild(label);
+      radios.push(radio);
     });
 
     wrapper.className = "tk-bar";
     select.className = "tk-tap";
 
     function update(value) {
+      var shown = visibleThemes();
+      var ids = shown.map(function (theme) { return theme.id; });
+      while (select.firstChild) select.removeChild(select.firstChild);
+      themes.forEach(function (theme) {
+        if (ids.indexOf(theme.id) === -1 && theme.id !== value.id) return;
+        var option = document.createElement("option");
+        option.value = theme.id;
+        option.textContent = theme.name;
+        select.appendChild(option);
+      });
       select.value = value.id;
-      buttons.forEach(function (button) {
-        button.setAttribute("aria-pressed", String(button.getAttribute("data-mode") === value.mode));
+      checkboxes.forEach(function (entry) {
+        var isShown = hiddenIds.indexOf(entry.id) === -1;
+        entry.checkbox.checked = isShown;
+        entry.checkbox.disabled = isShown && shown.length === 1;
+      });
+      radios.forEach(function (radio) {
+        radio.checked = radio.value === value.mode;
       });
     }
 
@@ -219,14 +337,17 @@
 
     wrapper.appendChild(label);
     wrapper.appendChild(select);
-    wrapper.appendChild(groupLabel);
     wrapper.appendChild(group);
+    wrapper.appendChild(details);
     container.appendChild(wrapper);
     update(get());
 
     var unsubscribe = onChange(update);
+    var hiddenListener = function () { update(get()); };
+    document.addEventListener("themekit:hidden", hiddenListener);
     return function () {
       unsubscribe();
+      document.removeEventListener("themekit:hidden", hiddenListener);
       wrapper.remove();
     };
   }
@@ -391,6 +512,10 @@
   window.ThemeKit = {
     themes: themes,
     modes: modes,
+    hide: hide,
+    unhide: unhide,
+    hidden: hidden,
+    visibleThemes: visibleThemes,
     get: get,
     set: set,
     setMode: setMode,
