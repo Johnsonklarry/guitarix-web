@@ -256,13 +256,21 @@ def is_whole(p):
         return "int" in kind
 
 
-def coerce(p, raw):
+def coerce(p, raw, live=False):
     """
     Turn a value from a presets file into one the engine accepts for p.
     Returns (value, clamp) -- clamp is (given, used) when the value was out of
     range. Choices come back as the option dict; see option_wire(). Raises
     Rejected with a reason.
+
+    live=True is the write path shared with the live controls: a value outside
+    the parameter's range is rejected rather than clamped, so a write never
+    silently sends something other than what was asked for. Import keeps
+    clamping and reports it through plan().
     """
+    if isinstance(raw, float) and not math.isfinite(raw):
+        raise Rejected("needs a finite number")
+
     options = p.get("options")
     if options:
         text = str(raw).strip().lower()
@@ -295,12 +303,15 @@ def coerce(p, raw):
         value = float(raw)
     except (TypeError, ValueError):
         raise Rejected("needs a number")
-    if math.isnan(value) or math.isinf(value):
+    if not math.isfinite(value):
         raise Rejected("needs a finite number")
 
     clamp = None
     lo, hi = float(p.get("min", 0)), float(p.get("max", 1))
     if lo <= hi and not lo <= value <= hi:
+        if live:
+            raise Rejected("is outside the range %s to %s"
+                           % (p.get("min"), p.get("max")))
         used = min(max(value, lo), hi)
         clamp, value = (value, used), used
     if is_whole(p):
