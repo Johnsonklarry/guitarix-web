@@ -616,6 +616,35 @@ def demo_only_guard():
         abort(403)
 
 
+# Routes that change state and must not be reachable without a session.
+# GET is always allowed (it only reads), and so are the login/logout routes
+# themselves -- otherwise there would be no way in.
+AUTH_EXEMPT_ENDPOINTS = ("login", "logout")
+
+
+@app.before_request
+def auth_guard():
+    """
+    Gate state-changing requests behind an active session.
+
+    Only when GX_PASSWORD is set: with no password configured the app is
+    deliberately open, exactly as it was before this guard existed. GET
+    requests, static assets and the demo/broadcast endpoints stay open --
+    the demo never reaches the rig and the broadcast server refuses
+    non-GET requests in demo_only_guard() above.
+    """
+    if not os.environ.get("GX_PASSWORD"):
+        return
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    if request.endpoint in AUTH_EXEMPT_ENDPOINTS:
+        return
+    if request.endpoint in DEMO_ENDPOINTS or request.endpoint in BROADCAST_ENDPOINTS:
+        return
+    if not session.get("authenticated"):
+        abort(401)
+
+
 @app.route("/")
 def index():
     # The shop window has its own page and client; the Studio template is wired
