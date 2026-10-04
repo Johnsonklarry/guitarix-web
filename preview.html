@@ -2361,9 +2361,17 @@ input[type="checkbox"] { transition: filter .12s ease, transform .08s ease; }
 
 /* ---- tap targets: 24 px at the very least (WCAG 2.2), roomier for fingers ---- */
 @media (pointer: coarse) {
-  .mini { min-height: 34px; }
-  .bank { min-height: 34px; }
-  .takes__badge.is-action { padding: 8px 12px; }
+  .mini { min-height: 44px; min-width: 44px; }
+  .bank { min-height: 44px; }
+  .takes__badge.is-action {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 12px;
+  }
+  .importer__close { width: 44px; height: 44px; }
+  .dry-toggle { min-height: 44px; }
+  .importer__check { min-height: 44px; }
 }
 
 
