@@ -1,0 +1,113 @@
+/* Scoped reset for Forge components */
+.forge-reset {
+  all: revert;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 100%;
+  vertical-align: baseline;
+  background: transparent;
+}
+
+/* Scoped typography for Forge components */
+.forge-typography {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.forge-typography h1,
+.forge-typography h2,
+.forge-typography h3,
+.forge-typography h4,
+.forge-typography h5,
+.forge-typography h6 {
+  font-family: var(--font-display);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.forge-typography h1 { font-size: 2rem; }
+.forge-typography h2 { font-size: 1.75rem; }
+.forge-typography h3 { font-size: 1.5rem; }
+.forge-typography h4 { font-size: 1.25rem; }
+.forge-typography h5 { font-size: 1rem; }
+.forge-typography h6 { font-size: 0.875rem; }
+
+.forge-typography p {
+  margin: 0 0 var(--space-2) 0;
+}
+
+.forge-typography a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.forge-typography a:hover {
+  text-decoration: underline;
+}
+
+.forge-typography strong {
+  font-weight: 600;
+}
+
+.forge-typography em {
+  font-style: italic;
+}
+
+.forge-typography code {
+  font-family: var(--font-mono);
+  background: var(--surface-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+}
+
+.forge-typography blockquote {
+  border-left: 3px solid var(--edge-strong);
+  padding-left: var(--space-3);
+  margin: var(--space-3) 0;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.forge-typography ul,
+.forge-typography ol {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+}
+
+.forge-typography li {
+  margin-bottom: var(--space-1);
+}
+
+.forge-typography hr {
+  border: 0;
+  height: 1px;
+  background: var(--edge);
+  margin: var(--space-4) 0;
+}
+
+/* Scoped focus rules for Forge components */
+.forge-ui :focus {
+  outline: none;
+}
+
+.forge-ui :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Scoped reduced-motion rules for Forge components */
+@media (prefers-reduced-motion: reduce) {
+  .forge-ui,
+  .forge-ui *,
+  .forge-ui *::before,
+  .forge-ui *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

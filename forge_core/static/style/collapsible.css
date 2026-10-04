@@ -1,0 +1,7 @@
+.disclosure {
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+}
+.disclosure:focus-visible {
+  outline: var(--focus-ring);
+}
