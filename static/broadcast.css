@@ -175,7 +175,10 @@ body {
 .listen {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  min-height: 44px;
+  min-width: 44px;
   padding: 8px 15px 8px 12px;
   border: 1px solid var(--edge);
   border-radius: var(--r-pill);
