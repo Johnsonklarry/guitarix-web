@@ -243,6 +243,14 @@ socket.on('hello', function (h) {
 /* Line our clock up with the server's: round trip, halve it, average a few. */
 function sync(n, done) {
   const samples = [];
+  const onError = function (err) {
+    // a failed or unanswered ping2 must not stall the sync loop: report it and
+    // carry on with whatever samples we already have
+    console.warn('ping2 failed:', err && err.message ? err.message : err);
+    if (typeof window !== 'undefined' && window.__spikePingError) {
+      window.__spikePingError(err);
+    }
+  };
   (function next(i) {
     if (i >= n) {
       samples.sort(function (a, b) { return a - b; });
@@ -254,6 +262,7 @@ function sync(n, done) {
     const timer = setTimeout(function () {
       if (handled) return;
       handled = true;
+      onError(new Error('ping2 timed out after 1000 ms'));
       next(i + 1);
     }, 1000);
     try {
@@ -271,6 +280,7 @@ function sync(n, done) {
       if (handled) return;
       handled = true;
       clearTimeout(timer);
+      onError(err);
       next(i + 1);
     }
   })(0);
