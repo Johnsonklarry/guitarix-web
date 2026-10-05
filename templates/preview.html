@@ -16,6 +16,10 @@
 <!-- the status bar floats over the page; the safe-area padding keeps it clear -->
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Guitarix &mdash; demo</title>
+
+<!-- Shared layers, ahead of this page's own overrides. -->
+<link rel="stylesheet" href="static/theme-kit/themes.css">
+<link rel="stylesheet" href="static/style.css">
 <style>
 :root {
   --tolex:      #151210;
@@ -308,20 +312,6 @@ body {
   margin-bottom: 14px;
 }
 
-.bank {
-  padding: var(--pad-chip);
-  border: 1px solid var(--edge);
-  border-radius: var(--r-pill);
-  background: var(--panel);
-  color: var(--muted);
-  font: inherit;
-  font-size: .74rem;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background .14s ease, color .14s ease, border-color .14s ease;
-  min-height: 28px;
-}
 @media (hover: hover) and (pointer: fine) {
   .bank:hover { background: var(--panel-hi); color: var(--cream); border-color: var(--edge-hi); }
 }
@@ -348,31 +338,6 @@ body {
   grid-auto-rows: minmax(74px, 104px);
 }
 
-.preset {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 74px;
-  max-height: 152px;
-  min-width: 0;
-  padding: 12px 16px;
-  border: 1px solid var(--edge);
-  border-radius: var(--r-sm);
-  background: linear-gradient(180deg, var(--panel-hi) 0%, var(--panel) 100%);
-  color: var(--cream);
-  font: inherit;
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  text-align: left;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 2px 4px rgba(0,0,0,.4);
-  transition: background .14s ease, border-color .14s ease,
-              box-shadow .14s ease, transform .08s ease, color .14s ease;
-}
 
 .lamp {
   flex: none;
@@ -449,14 +414,6 @@ body {
 
 /* ---------------------------------------------------------------- groups */
 
-.group {
-  flex: none;
-  border: 1px solid #2c251f;
-  border-radius: var(--r-md);
-  background: rgba(36,31,27,.72);
-  margin-bottom: 14px;
-  overflow: hidden;
-}
 .group:last-child { margin-bottom: 0; }
 
 .group__head {
@@ -522,24 +479,6 @@ body {
   color: var(--muted);
 }
 
-.switch {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: var(--pad-chip);
-  border: 1px solid var(--edge);
-  border-radius: var(--r-pill);
-  background: var(--panel);
-  color: var(--muted);
-  font: inherit;
-  font-size: .66rem;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background .14s ease, border-color .14s ease, color .14s ease;
-}
 @media (hover: hover) and (pointer: fine) {
   .switch:hover { background: var(--panel-hi); border-color: var(--edge-hi); color: var(--cream); }
 }
@@ -887,21 +826,6 @@ input[type="range"]:focus-visible::-moz-range-thumb {
 .toolbar__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .toolbar__actions .act { flex: 1 1 0; }
 
-.act {
-  padding: var(--pad-btn);
-  border: 1px solid var(--edge);
-  border-radius: var(--r-sm);
-  background: linear-gradient(180deg, var(--panel-hi) 0%, var(--panel) 100%);
-  color: var(--cream);
-  font: inherit;
-  font-size: .72rem;
-  font-weight: 700;
-  letter-spacing: .13em;
-  text-transform: uppercase;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background .14s ease, border-color .14s ease, color .14s ease, transform .08s ease;
-}
 @media (hover: hover) and (pointer: fine) {
   .act:hover:not(:disabled) { background: #3a322b; border-color: var(--edge-hi); color: #fff; }
 }
@@ -953,26 +877,6 @@ input[type="range"]:focus-visible::-moz-range-thumb {
   box-shadow: 0 0 0 1px var(--lamp), 0 0 18px rgba(255,155,47,.18);
 }
 
-.mini {
-  padding: var(--pad-btn-sm);
-  border: 1px solid var(--edge);
-  border-radius: var(--r-sm);
-  background: var(--panel);
-  color: var(--muted);
-  font: inherit;
-  font-size: .64rem;
-  font-weight: 700;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  text-decoration: none;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background .14s ease, color .14s ease, border-color .14s ease;
-  min-height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
 @media (hover: hover) and (pointer: fine) {
   .mini:hover { background: var(--panel-hi); color: var(--cream); border-color: var(--edge-hi); }
   .mini.is-danger:hover { border-color: var(--fault); color: #ffb3ad; background: #2c1816; }
@@ -1134,15 +1038,6 @@ input[type="range"]:focus-visible::-moz-range-thumb {
 
 /* ---------------------------------------------------------------- dialog */
 
-.ask {
-  width: min(400px, calc(100vw - 32px));
-  padding: 0;
-  border: 1px solid var(--edge);
-  border-radius: var(--r-md);
-  background: #221d19;
-  color: var(--cream);
-  box-shadow: 0 30px 70px rgba(0,0,0,.7);
-}
 .ask::backdrop { background: rgba(0,0,0,.6); }
 .ask form { padding: 20px; }
 
@@ -1206,17 +1101,6 @@ input[type="range"]:focus-visible::-moz-range-thumb {
   max-width: 100%;
 }
 
-.toast {
-  padding: var(--sp-4) var(--sp-5);
-  border: 1px solid var(--edge);
-  border-radius: var(--r-md);
-  background: #2a231d;
-  color: var(--cream);
-  font-size: .82rem;
-  box-shadow: 0 12px 30px rgba(0,0,0,.6);
-  transition: opacity .35s ease, transform .35s ease;
-  animation: toast-in .22s ease-out;
-}
 .toast.is-ok    { border-color: #7a5426; }
 .toast.is-error { border-color: #7a3630; background: #2c1c19; }
 .toast.is-going { opacity: 0; transform: translateY(6px); }
@@ -1612,17 +1496,6 @@ dialog[open]::backdrop       { animation: fade-in .18s ease-out; }
 
 /* ---------------------------------------------------------------- importer */
 
-.importer {
-  width: min(640px, calc(100vw - 24px));
-  max-height: min(86vh, 860px);
-  padding: 0;
-  border: 1px solid var(--edge);
-  border-radius: var(--r-md);
-  background: #1d1916;
-  color: var(--cream);
-  box-shadow: 0 30px 80px rgba(0,0,0,.75);
-  overflow: hidden;
-}
 .importer[open] { display: flex; flex-direction: column; }
 .importer::backdrop { background: rgba(0,0,0,.62); }
 
@@ -2047,24 +1920,6 @@ dialog[open]::backdrop       { animation: fade-in .18s ease-out; }
 
 .panel__side { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 
-.listen {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 15px 8px 12px;
-  border: 1px solid var(--edge);
-  border-radius: var(--r-pill);
-  background: var(--panel);
-  color: var(--muted);
-  font: inherit;
-  font-size: .7rem;
-  font-weight: 700;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background .14s ease, border-color .14s ease, color .14s ease;
-}
 @media (hover: hover) and (pointer: fine) {
   .listen:hover { background: var(--panel-hi); border-color: var(--edge-hi); color: var(--cream); }
 }
@@ -2098,20 +1953,6 @@ dialog[open]::backdrop       { animation: fade-in .18s ease-out; }
    Big targets, read at a glance from a mic stand. Covers the page.
    ================================================================ */
 
-.live {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: clamp(10px, 2.2vh, 18px);
-  padding:
-    max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right))
-    max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
-  background-color: #0b0908;
-  background-image: radial-gradient(120% 80% at 50% -10%, #241e19 0%, var(--tolex) 55%, var(--tolex-deep) 100%);
-  overflow-y: auto;
-}
 .live:not([hidden]) { animation: fade-in .18s ease-out; }
 body.is-live-mode { overflow: hidden; }
 
@@ -2234,26 +2075,6 @@ body.is-live-mode { overflow: hidden; }
   .live__pads { grid-template-columns: repeat(2, 1fr); }
 }
 
-.pad {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: 4px;
-  min-height: clamp(96px, 16vh, 140px);
-  padding: var(--sp-5);
-  border: 1px solid var(--edge);
-  border-radius: var(--r-lg);
-  background: linear-gradient(180deg, #2e2822 0%, #1f1a16 100%);
-  color: var(--cream);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 6px 16px rgba(0,0,0,.4);
-  transition: background .12s ease, border-color .12s ease, transform .08s ease, box-shadow .15s ease;
-}
 .pad:active:not(:disabled) { transform: scale(.97); }
 .pad:focus-visible { outline: 2px solid var(--lamp); outline-offset: 3px; }
 .pad:disabled { opacity: .4; cursor: not-allowed; }
@@ -2844,6 +2665,7 @@ input[type="checkbox"] { transition: filter .12s ease, transform .08s ease; }
 </dialog>
 
 
+<script src="static/theme-kit/theme.js" defer></script>
 <script>window.GX_DEMO_ONLY = false; window.GX_DEMO_CLIP = "static/demo/jam.mp3";</script>
 <script>
 /* Demo mode: a stand-in for the Pi, running entirely in this browser.

@@ -803,20 +803,79 @@ def client_connected():
     socketio.emit("snapshot", state.snapshot())
 
 
+def _param_resync(pid):
+    """
+    Put an optimistic control back in step with the engine.
+
+    A known id gets its fresh engine value; anything else gets the whole
+    snapshot, since there is nothing better to show for a control we don't
+    recognise. Reads from the engine, not the app's mirror, so a rejected
+    write can't leave the browser showing the value it guessed.
+    """
+    with state.lock:
+        known = bool(pid) and pid in state.parameters
+    if known:
+        try:
+            value = rpc.get([pid]).get(pid)
+        except (RpcError, OSError, TimeoutError) as exc:
+            log.warning("resync read of %s failed: %s", pid, exc)
+            known = False
+    if known:
+        event, data = "params", {pid: value}
+    else:
+        event, data = "snapshot", state.snapshot()
+    sid = _requester()
+    if sid:
+        socketio.emit(event, data, to=sid)
+    else:
+        socketio.emit(event, data)
+
+
 @socketio.on("set_param")
 def client_set_param(msg):
-    pid, value = msg.get("id"), msg.get("value")
-    if not pid:
+    pid = msg.get("id") if isinstance(msg, dict) else None
+    value = msg.get("value") if isinstance(msg, dict) else None
+    if not isinstance(pid, str) or not pid:
+        _param_resync(None)
+        return
+    with state.lock:
+        parameters = state.parameters
+        current = state.values.get(pid)
+    p = parameters.get(pid)
+    if p is None or p.get("non_preset") or presets_io.plumbing(pid):
+        _param_resync(pid)
         return
     try:
-        rpc.set({pid: value}, lane=gx_rpc.HIGH)
+        # The same pure normalization the importer uses, in live-write mode:
+        # out-of-range is refused, not clamped.
+        normalized, _ = presets_io.coerce(p, value, live=True)
+    except presets_io.Rejected as exc:
+        log.warning("set %s rejected: %s", pid, exc)
+        _param_resync(pid)
+        return
+    if isinstance(normalized, dict):
+        # choices can be reported as an index or a key; send back whichever
+        # form the engine is currently using
+        normalized = presets_io.option_wire(normalized, current)
+    try:
+        rpc.set({pid: normalized}, lane=gx_rpc.HIGH)
     except OSError as exc:
         log.warning("set %s failed: %s", pid, exc)
+        toast("Couldn't set %s: %s" % (pid, exc), "error")
+        _param_resync(pid)
         return
     # Guitarix broadcasts changes to every client except the one that made
-    # them, so our own writes never come back. Fan them out here instead,
-    # otherwise the other browsers would drift out of sync.
-    queue_params({pid: value})
+    # them, so our own writes never come back. Read the value back rather than
+    # queueing the one that was submitted: the engine may have rounded or
+    # refused it, and the control must show what is actually set.
+    try:
+        confirmed = rpc.get([pid])
+    except (RpcError, OSError, TimeoutError) as exc:
+        log.warning("couldn't confirm %s: %s", pid, exc)
+        toast("Couldn't confirm %s was set: %s" % (pid, exc), "error")
+        _param_resync(pid)
+        return
+    queue_params({pid: confirmed.get(pid)})
     set_dirty(True)
 
 
