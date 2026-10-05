@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "themes": [
+    {
+      "id": "bag-end",
+      "name": "Fireside",
+      "native": "dark",
+      "group": "Middle-earth"
+    },
+    {
+      "id": "middle-earth",
+      "name": "Middle-earth",
+      "native": "dark",
+      "group": "Middle-earth"
+    },
+    {
+      "id": "plex-amber",
+      "name": "Amber",
+      "native": "dark",
+      "group": "Studio"
+    },
+    {
+      "id": "amp-lamp",
+      "name": "Amp lamp",
+      "native": "dark",
+      "group": "Studio"
+    },
+    {
+      "id": "studio-glass",
+      "name": "Studio",
+      "native": "dark",
+      "group": "Studio"
+    },
+    {
+      "id": "mission-control",
+      "name": "Console",
+      "native": "dark",
+      "group": "Studio"
+    },
+    {
+      "id": "shire",
+      "name": "The Shire",
+      "native": "light",
+      "group": "Middle-earth"
+    },
+    {
+      "id": "pipeweed",
+      "name": "Pipeweed",
+      "native": "dark",
+      "group": "Middle-earth"
+    },
+    {
+      "id": "woodland-realm",
+      "name": "Woodland Realm",
+      "native": "dark",
+      "group": "Middle-earth"
+    },
+    {
+      "id": "minas-tirith",
+      "name": "White City",
+      "native": "light",
+      "group": "Middle-earth"
+    },
+    {
+      "id": "mount-doom",
+      "name": "Mount Doom",
+      "native": "dark",
+      "group": "Middle-earth"
+    },
+    {
+      "id": "balrog",
+      "name": "Balrog",
+      "native": "dark",
+      "group": "Middle-earth"
+    },
+    {
+      "id": "bag-end-doorway",
+      "name": "Bag End Doorway",
+      "native": "light",
+      "group": "Middle-earth"
+    }
+  ]
+}

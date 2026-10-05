@@ -1,0 +1,39 @@
+/* Screen-reader-only text: present for assistive tech, invisible on screen. */
+.tk-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Skip link: hidden until it takes focus, then a real 44px target. */
+.tk-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  background: var(--tk-surface, var(--surface, #111));
+  color: var(--tk-text, var(--text, #fff));
+  border: 1px solid var(--tk-border, var(--border, currentColor));
+  border-radius: 6px;
+  font: inherit;
+  text-decoration: none;
+}
+
+.tk-skip-link:focus,
+.tk-skip-link:focus-visible {
+  left: 8px;
+  top: 8px;
+  outline: 2px solid var(--tk-accent, var(--accent, currentColor));
+  outline-offset: 2px;
+}

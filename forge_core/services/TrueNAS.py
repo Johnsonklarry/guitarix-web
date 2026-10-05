@@ -117,10 +117,15 @@ def ups_badge(values, low_runtime=300):
         runtime = float(values["battery.runtime"])
     except (KeyError, TypeError, ValueError):
         return {"state": "unknown", "charge": None, "runtime_seconds": None}
-    status = str(values.get("ups.status", "")).split()
+    raw_status = values.get("ups.status")
+    if raw_status is None or not str(raw_status).strip():
+        return {"state": "unknown", "charge": charge, "runtime_seconds": runtime}
+    status = str(raw_status).split()
     if "OB" in status:
         critical = "LB" in status or runtime <= low_runtime
         state = "critical" if critical else "on_battery"
-    else:
+    elif "OL" in status:
         state = "online"
+    else:
+        state = "unknown"
     return {"state": state, "charge": charge, "runtime_seconds": runtime}

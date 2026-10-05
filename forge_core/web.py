@@ -65,6 +65,38 @@ _COVER_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z")
 _COVER_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"})
 _COVER_LIMIT = 5 * 1024 * 1024
 
+# Plex artwork is fetched server-side; only these upstream response headers are
+# relayed to the browser and the Plex token never leaves this process.
+_PLEX_ARTWORK_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"})
+_PLEX_ARTWORK_LIMIT = 5 * 1024 * 1024
+_PLEX_ARTWORK_HEADERS = frozenset({
+    "content-type", "content-length", "cache-control", "etag", "last-modified",
+})
+
+
+def _limited_stream(chunks, limit):
+    """Yield at most ``_PROXY_CHUNK`` bytes per chunk, up to ``limit`` bytes total.
+
+    The source iterator is always closed, and a ``ValueError`` is raised as soon
+    as the running total exceeds ``limit`` so an unbounded upstream body can
+    never be streamed past the configured cap.
+    """
+    total = 0
+    try:
+        for chunk in chunks:
+            if not chunk:
+                continue
+            for start in range(0, len(chunk), _PROXY_CHUNK):
+                piece = chunk[start:start + _PROXY_CHUNK]
+                total += len(piece)
+                if total > limit:
+                    raise ValueError("Stream exceeds the proxy limit")
+                yield piece
+    finally:
+        close = getattr(chunks, "close", None)
+        if callable(close):
+            close()
+
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -72,6 +104,93 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _COVER_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+class _PlexRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only while they stay on the configured Plex origin.
+
+    A redirect to any other origin is refused before the request is issued, so
+    the Plex token attached to the original request is never sent elsewhere.
+    """
+
+    def __init__(self, origin: str):
+        super().__init__()
+        self._origin = origin
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if _same_origin(self._origin, newurl):
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        return None
+
+
+def _same_origin(origin: str, url: str) -> bool:
+    """True when ``url`` resolves to the same scheme/host/port as ``origin``."""
+    try:
+        base = urlsplit(origin)
+        target = urlsplit(url)
+    except ValueError:
+        return False
+    if not target.scheme or not target.hostname:
+        return False
+    return (
+        target.scheme.lower() == base.scheme.lower()
+        and (target.hostname or "").lower() == (base.hostname or "").lower()
+        and (target.port or _default_port(target.scheme)) == (base.port or _default_port(base.scheme))
+    )
+
+
+def _default_port(scheme: str) -> int | None:
+    scheme = (scheme or "").lower()
+    if scheme == "http":
+        return 80
+    if scheme == "https":
+        return 443
+    return None
+
+
+class PlexSegmentProxy:
+    """Same-origin Plex segment backend for the shared file proxy.
+
+    ``segment_source.segment_url(resource_id)`` resolves the upstream segment
+    URL; this class never guesses or builds URLs itself. Requests are pinned to
+    the configured ``origin`` (redirects off that origin are refused by
+    ``_PlexRedirectHandler``), the Plex token is attached only to requests that
+    stay on that origin, and the response body is streamed in bounded chunks.
+    """
+
+    def __init__(self, origin, token, segment_source, timeout=10):
+        self.origin = origin
+        self.token = token
+        self.segment_source = segment_source
+        self.timeout = timeout
+
+    def fetch(self, kind, resource_id, range_header):
+        if kind != "file" or not _PROXY_ID_PATTERN.fullmatch(resource_id):
+            return None
+        url = self.segment_source.segment_url(resource_id)
+        if not url or not _same_origin(self.origin, url):
+            return None
+        headers = {}
+        if self.token:
+            headers["X-Plex-Token"] = self.token
+        if range_header:
+            headers["Range"] = range_header
+        opener = urllib.request.build_opener(_PlexRedirectHandler(self.origin))
+        response = opener.open(
+            urllib.request.Request(url, headers=headers), timeout=self.timeout
+        )
+
+        def stream():
+            try:
+                while True:
+                    chunk = response.read(_PROXY_CHUNK)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                response.close()
+
+        return response.status, dict(response.headers), stream()
 
 
 def render_family_page(greeting, tiles):
@@ -116,15 +235,23 @@ class ForgeAPI:
         can_view=lambda request: True,
         audiobookshelf=None,
         tautulli_alerts=None,
+        plex_webhooks=None,
         nextcloud_summary=None,
         proxy=None,
+        plex_artwork=None,
     ):
         self.store = store
         self.registry = registry
         self.can_write = can_write
+        # Opt-in Plex artwork source exposing artwork_url(resource_id) -> str | None.
+        # The URL is resolved server-side and only same-origin redirects are followed.
+        self.plex_artwork = plex_artwork
         # Opt-in Tautulli alert receiver; disabled (None) leaves the
         # notification-log endpoints and everything else untouched.
         self.tautulli_alerts = tautulli_alerts
+        # Opt-in Plex webhook receiver; disabled (None) leaves the
+        # webhook endpoint and everything else untouched.
+        self.plex_webhooks = plex_webhooks
         # Opt-in cover provider: callable(item_id) -> (content_type, bytes) or None.
         # When set it takes precedence over the URL proxy and is gated by can_view.
         self.cover_provider = cover_provider
@@ -210,6 +337,49 @@ class ForgeAPI:
         headers["X-Content-Type-Options"] = "nosniff"
         return status, headers, body
 
+    def _plex_artwork(self, resource_id: str, request) -> tuple[int, dict, bytes]:
+        """Stream Plex artwork for ``resource_id`` without leaking credentials.
+
+        The artwork URL is resolved server-side by the configured source; the
+        Plex token is attached only to that request and redirects are followed
+        only while they stay on the same origin. Only a safe allow-list of
+        upstream headers is relayed, so neither the token nor the upstream URL
+        can reach the browser.
+        """
+        source = self.plex_artwork
+        if source is None or not self.audiobookshelf_url:
+            return self._error(404, "Not found")
+        if not self.can_view(request):
+            return self._error(403, "Forbidden")
+        if not _PROXY_ID_PATTERN.fullmatch(resource_id):
+            return self._error(404, "Not found")
+        try:
+            url = source.artwork_url(resource_id)
+        except (OSError, ValueError):
+            return self._error(502, "Artwork unavailable")
+        if not url or not _same_origin(self.audiobookshelf_url, url):
+            return self._error(404, "Not found")
+        headers = {"Accept": "image/*"}
+        if self._audiobookshelf_token:
+            headers["X-Plex-Token"] = self._audiobookshelf_token
+        opener = urllib.request.build_opener(_PlexRedirectHandler(self.audiobookshelf_url))
+        try:
+            with opener.open(urllib.request.Request(url, headers=headers), timeout=10) as response:
+                content_type = response.headers.get_content_type()
+                data = response.read(_PLEX_ARTWORK_LIMIT + 1)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            return self._error(404 if exc.code == 404 else 502, "Artwork unavailable")
+        except (OSError, ValueError):
+            return self._error(502, "Artwork unavailable")
+        if content_type not in _PLEX_ARTWORK_TYPES or len(data) > _PLEX_ARTWORK_LIMIT:
+            return self._error(502, "Artwork unavailable")
+        return 200, {
+            "Content-Type": content_type,
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        }, data
+
     def _proxy(self, kind: str, resource_id: str, request) -> tuple[int, dict, bytes]:
         """Stream an allowed image or file through the shared proxy helper.
 
@@ -217,6 +387,8 @@ class ForgeAPI:
         only a safe allow-list of upstream headers is relayed and the upstream
         URL and credentials never reach the browser.
         """
+        if kind == "image" and self.plex_artwork is not None:
+            return self._plex_artwork(resource_id, request)
         if self.proxy is None:
             return self._error(404, "Not found")
         if not self.can_view(request):
@@ -236,6 +408,8 @@ class ForgeAPI:
                    if name.lower() in _PROXY_HEADERS}
         headers.setdefault("Cache-Control", "no-store")
         headers["X-Content-Type-Options"] = "nosniff"
+        if not isinstance(body, (bytes, bytearray)):
+            body = _limited_stream(body, _PROXY_LIMIT)
         return status, headers, body
 
     @staticmethod
@@ -273,6 +447,25 @@ class ForgeAPI:
         if len(body_bytes) > _BODY_LIMIT:
             return self._error(413, "Body too large", api=is_api)
 
+        if route == "/sw.js" and method == "GET":
+            status, headers, payload = self._static("theme-kit/pwa/sw.js")
+            if status == 200:
+                headers["Service-Worker-Allowed"] = "/"
+                headers["Cache-Control"] = "no-cache"
+            return status, headers, payload
+        if route == "/manifest.webmanifest" and method == "GET":
+            status, headers, payload = self._static("theme-kit/pwa/manifest.template.json")
+            if status == 200:
+                headers["Content-Type"] = "application/manifest+json"
+            return status, headers, payload
+        if route == "/offline.html" and method == "GET":
+            return self._static("theme-kit/pwa/offline.html")
+        if route == "/forge/theme-kit/themes.json" and method == "GET":
+            status, headers, payload = self._static("theme-kit/themes.json")
+            if status == 200:
+                headers["Access-Control-Allow-Origin"] = "*"
+                headers["Cache-Control"] = "max-age=300"
+            return status, headers, payload
         if route == "/forge/designer" and method == "GET":
             return self._static("designer.html")
         if route.startswith("/forge/static/") and method == "GET":
@@ -285,12 +478,12 @@ class ForgeAPI:
 
         if route.startswith(_COVER_PREFIX) and method == "GET":
             item_id = route[len(_COVER_PREFIX):]
-            if self.cover_provider is None:
-                return self._cover(item_id)
             if not self.can_view(request):
                 return self._error(403, "Forbidden")
             if not _ITEM_ID_PATTERN.fullmatch(item_id):
                 return self._error(404, "Not found")
+            if self.cover_provider is None:
+                return self._cover(item_id)
             cover = self.cover_provider(item_id)
             if not cover:
                 return self._error(404, "Not found")
@@ -303,6 +496,15 @@ class ForgeAPI:
                 return self._error(404, "Not found")
             headers = getattr(request, "headers", None)
             provided = headers.get("X-Tautulli-Secret") if headers is not None else None
+            status, payload = receiver.receive(body_bytes, provided)
+            return self._json(status, payload)
+
+        if route == "/forge/api/plex/webhook" and method == "POST":
+            receiver = self.plex_webhooks
+            if receiver is None or not getattr(receiver, "enabled", False):
+                return self._error(404, "Not found")
+            headers = getattr(request, "headers", None)
+            provided = headers.get("X-Plex-Webhook-Secret") if headers is not None else None
             status, payload = receiver.receive(body_bytes, provided)
             return self._json(status, payload)
 
@@ -412,7 +614,7 @@ def flask_blueprint(api: ForgeAPI, url_prefix: str = "/forge"):
 
 def serve_stdlib(handler, api: ForgeAPI) -> bool:
     """Handle a Forge request from a BaseHTTPRequestHandler."""
-    if not handler.path.startswith("/forge"):
+    if urlsplit(handler.path).path not in {"/sw.js", "/manifest.webmanifest", "/offline.html"} and not handler.path.startswith("/forge"):
         return False
 
     length_header = handler.headers.get("Content-Length", "0")
@@ -432,8 +634,19 @@ def serve_stdlib(handler, api: ForgeAPI) -> bool:
     handler.send_response(status)
     for name, value in headers.items():
         handler.send_header(name, value)
-    handler.send_header("Content-Length", str(len(payload)))
+    if isinstance(payload, (bytes, bytearray)):
+        handler.send_header("Content-Length", str(len(payload)))
+    elif not any(name.lower() == "content-length" for name in headers):
+        # The length of a streamed payload is unknown up front, so the
+        # connection cannot be reused once the body has been written.
+        handler.close_connection = True
     handler.end_headers()
-    if handler.command != "HEAD" and payload:
-        handler.wfile.write(payload)
+    if handler.command != "HEAD":
+        if isinstance(payload, (bytes, bytearray)):
+            if payload:
+                handler.wfile.write(payload)
+        else:
+            for chunk in payload:
+                if chunk:
+                    handler.wfile.write(chunk)
     return True

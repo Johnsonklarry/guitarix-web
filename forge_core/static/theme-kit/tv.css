@@ -1,0 +1,52 @@
+/* Include after the application's base styles. TV mode is opt-in. */
+html[data-tv="on"] {
+  font-size: clamp(20px, 1.5vw + 14px, 32px);
+  scroll-padding: 5vh 5vw;
+}
+
+html[data-tv="on"] body {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: max(5vh, var(--safe-top, 0px)) max(5vw, var(--safe-right, 0px))
+    max(5vh, var(--safe-bottom, 0px)) max(5vw, var(--safe-left, 0px));
+}
+
+html[data-tv="on"] :is(a, button, input, select, textarea, summary, [role="button"], [role="tab"]) {
+  min-height: 64px;
+  min-width: 64px;
+}
+
+html[data-tv="on"] .gp-focus {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+  box-shadow: var(--focus-ring);
+  transform: scale(1.04);
+  transition: transform var(--dur-fast, 140ms) ease;
+}
+
+html[data-tv="on"] .tk-tv-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 2147483647;
+  width: 22px;
+  height: 28px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 0 100%, 29% 76%, 47% 100%, 65% 91%, 47% 67%, 86% 67%);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(0, 0, 0);
+  transition: transform var(--dur-fast, 140ms) ease, opacity var(--dur-fast, 140ms) ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-tv="on"] .gp-focus,
+  html[data-tv="on"] .tk-tv-cursor {
+    transition: none;
+  }
+}
+
+html[data-tv="on"][data-fx="off"] .gp-focus,
+html[data-tv="on"][data-fx="off"] .tk-tv-cursor {
+  transition: none;
+}

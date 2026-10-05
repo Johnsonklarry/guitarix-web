@@ -31,6 +31,10 @@ SERVICE_IDS: tuple[str, ...] = (
     "obs",
     "mediamtx",
     "openai",
+    "audiobookshelf",
+    "nextcloud",
+    "joplin",
+    "spotify",
 )
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})

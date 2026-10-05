@@ -25,6 +25,8 @@
   var modeNames = { light: "Light", dark: "Dark", oled: "OLED", system: "System" };
   // The old generic themes are now bag-end in the matching mode.
   var legacyThemeModes = { light: "light", dark: "dark" };
+  var catalogStorageKey = "theme-kit-catalog";
+  var mountedSwitchers = [];
   var listeners = [];
   var choice = null;
   var hiddenIds = readHidden();
@@ -50,6 +52,79 @@
   function resolveMode(mode) {
     if (mode === "system") return colorPreference && colorPreference.matches ? "dark" : "light";
     return mode;
+  }
+
+  function validateThemeEntry(entry) {
+    if (!entry || typeof entry !== "object") return false;
+    if (typeof entry.id !== "string" || !/^[a-z0-9-]{1,40}$/.test(entry.id)) return false;
+    if (typeof entry.name !== "string") return false;
+    if (entry.native !== "light" && entry.native !== "dark") return false;
+    return true;
+  }
+
+  function mergeCatalog(entries) {
+    if (!Array.isArray(entries)) return false;
+    var changed = false;
+    entries.forEach(function (entry) {
+      if (!validateThemeEntry(entry)) return;
+      if (!validId(entry.id)) {
+        themes.push({ id: entry.id, name: entry.name, native: entry.native });
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  function notifyCatalog() {
+    mountedSwitchers.forEach(function (fn) {
+      fn();
+    });
+    document.dispatchEvent(new CustomEvent("themekit:catalog", { detail: themes.slice() }));
+  }
+
+  function applyCatalogData(entries) {
+    var changed = mergeCatalog(entries);
+    if (changed) {
+      notifyCatalog();
+    }
+    return changed;
+  }
+
+  function loadCachedCatalog() {
+    var cached = readStorage(catalogStorageKey);
+    if (Array.isArray(cached) && mergeCatalog(cached)) {
+      // Switchers mount after this runs; tell them (and listeners) once the page has set up.
+      setTimeout(notifyCatalog, 0);
+    }
+  }
+
+  function loadCatalog(url) {
+    url = url || "/forge/theme-kit/themes.json";
+    if (typeof window.fetch !== "function") {
+      return Promise.resolve(themes);
+    }
+    return window.fetch(url)
+      .then(function (response) {
+        if (!response.ok) return null;
+        return response.json();
+      })
+      .then(function (data) {
+        // themes.json is {version, themes: [...]}; a bare array is accepted too.
+        var list = Array.isArray(data) ? data : (data && Array.isArray(data.themes) ? data.themes : null);
+        if (list) {
+          var validEntries = list.filter(validateThemeEntry);
+          try {
+            window.localStorage.setItem(catalogStorageKey, JSON.stringify(validEntries));
+          } catch (error) {
+            // Storage unavailable
+          }
+          applyCatalogData(validEntries);
+        }
+        return themes;
+      })
+      .catch(function () {
+        return themes;
+      });
   }
 
   function normalise(id, mode, back) {
@@ -209,10 +284,11 @@
 
   // Two controls: a Theme <select> and a Mode group of segmented buttons
   // (Light / Dark / OLED / System), 44px targets via .tk-tap, aria-pressed on the active mode.
-  function mountSwitcher(container) {
+  function mountSwitcher(container, options) {
     if (!container || typeof container.appendChild !== "function") {
       throw new TypeError("Expected a container element");
     }
+    options = options || {};
 
     var wrapper = document.createElement("div");
     var label = document.createElement("label");
@@ -340,14 +416,24 @@
     wrapper.appendChild(group);
     wrapper.appendChild(details);
     container.appendChild(wrapper);
+    var unmountComfort = null;
+    if (options.comfort && window.ThemeKit && window.ThemeKit.comfort) {
+      unmountComfort = window.ThemeKit.comfort.mount(wrapper);
+    }
     update(get());
+
+    var rerenderSwitcher = function () { update(get()); };
+    mountedSwitchers.push(rerenderSwitcher);
 
     var unsubscribe = onChange(update);
     var hiddenListener = function () { update(get()); };
     document.addEventListener("themekit:hidden", hiddenListener);
     return function () {
+      var switcherIndex = mountedSwitchers.indexOf(rerenderSwitcher);
+      if (switcherIndex !== -1) mountedSwitchers.splice(switcherIndex, 1);
       unsubscribe();
       document.removeEventListener("themekit:hidden", hiddenListener);
+      if (unmountComfort) unmountComfort();
       wrapper.remove();
     };
   }
@@ -473,6 +559,8 @@
     };
   }
 
+  loadCachedCatalog();
+
   // Start-up order: saved v2 choice, migrated legacy choice, the page's own attributes
   // (data-theme / data-mode, legacy data-oled, legacy theme ids), data-theme-auto, bag-end.
   var stored = readChoice();
@@ -509,13 +597,16 @@
     }
   }
 
+  var comfort = window.ThemeKit && window.ThemeKit.comfort || window.ThemeKitComfort;
   window.ThemeKit = {
+    comfort: comfort,
     themes: themes,
     modes: modes,
     hide: hide,
     unhide: unhide,
     hidden: hidden,
     visibleThemes: visibleThemes,
+    loadCatalog: loadCatalog,
     get: get,
     set: set,
     setMode: setMode,
@@ -523,6 +614,7 @@
     mountSwitcher: mountSwitcher,
     onChange: onChange,
     animate: animate,
-    burnInGuard: burnInGuard
+    burnInGuard: burnInGuard,
+    ambient: window.ThemeKitAmbient
   };
 }());

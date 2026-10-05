@@ -26,6 +26,7 @@ Plex media server integration utilities.
 
 from __future__ import annotations
 
+import hmac
 import json
 import re
 import urllib.error
@@ -45,6 +46,15 @@ ALLOWED_COMMANDS = frozenset((
     "stop",
     "skip_next",
     "skip_previous",
+))
+
+#: Plex webhook events the activity parser understands.
+SUPPORTED_EVENTS = frozenset((
+    "media.play",
+    "media.pause",
+    "media.resume",
+    "media.stop",
+    "media.scrobble",
 ))
 
 #: Slugs may contain ASCII letters, digits, ``.``, ``_`` and ``-`` and must
@@ -139,6 +149,106 @@ def _as_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def parse_activity_event(body):
+    """Parse a Plex webhook payload into a normalized activity event dict.
+
+    Accepts ``bytes``, ``str`` or an already-decoded JSON payload. Returns
+    ``None`` for malformed JSON, non-object payloads, or events outside
+    :data:`SUPPORTED_EVENTS`. This function is pure: it never touches a
+    transport, :class:`PlexClient` or :data:`ALLOWED_COMMANDS`, so it can
+    never trigger playback, and it never raises on bad input.
+    """
+    if isinstance(body, (bytes, bytearray)):
+        try:
+            body = bytes(body).decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            return None
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except (ValueError, RecursionError):
+            return None
+    if not isinstance(body, dict):
+        return None
+    event = body.get("event")
+    if not isinstance(event, str) or event not in SUPPORTED_EVENTS:
+        return None
+    account = body.get("Account")
+    player = body.get("Player")
+    metadata = body.get("Metadata")
+    if not isinstance(account, dict):
+        account = {}
+    if not isinstance(player, dict):
+        player = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {
+        "event": event,
+        "user": account.get("title"),
+        "player": player.get("title"),
+        "media_type": metadata.get("type"),
+        "title": metadata.get("title"),
+        "rating_key": metadata.get("ratingKey"),
+    }
+
+
+class PlexWebhookReceiver:
+    """Receive Plex webhook events and expose the latest parsed activity.
+
+    The receiver is inert unless constructed with a non-empty ``secret``: the
+    :attr:`enabled` property is ``False`` for any other value, which makes the
+    ForgeAPI route answer 404. Every request must present a matching secret
+    (compared with :func:`hmac.compare_digest`); mismatches are rejected before
+    the body is parsed. The receiver only ever parses events through
+    :func:`parse_activity_event` and never forwards a playback command.
+    """
+
+    def __init__(self, secret, sessions_provider=None):
+        self.secret = secret
+        self.sessions_provider = sessions_provider
+        self._last_event = None
+
+    @property
+    def enabled(self):
+        """True only when a non-empty string secret was configured."""
+        return isinstance(self.secret, str) and bool(self.secret)
+
+    def receive(self, body, secret):
+        """Validate the secret and parse ``body`` into a normalized event.
+
+        Returns ``(403, {"error": "Forbidden"})`` when the secret is missing or
+        does not match, ``(202, {"accepted": True, "event": event})`` for a
+        supported event, and ``(200, {"accepted": False})`` for unsupported or
+        malformed bodies.
+        """
+        if not self.enabled:
+            return 403, {"error": "Forbidden"}
+        if not isinstance(secret, str) or not hmac.compare_digest(secret, self.secret):
+            return 403, {"error": "Forbidden"}
+        event = parse_activity_event(body)
+        if event is None:
+            return 200, {"accepted": False}
+        self._last_event = event
+        return 202, {"accepted": True, "event": event["event"]}
+
+    def latest_activity(self):
+        """Return the last parsed event, falling back to a bounded session poll.
+
+        When no webhook event has been received (for example because the server
+        has no Plex Pass) and a ``sessions_provider`` was supplied, the provider
+        is called and its result returned. A :class:`PlexError` from the
+        provider yields ``[]`` so a refresh never raises.
+        """
+        if self._last_event is not None:
+            return self._last_event
+        if self.sessions_provider is None:
+            return None
+        try:
+            return self.sessions_provider()
+        except PlexError:
+            return []
 
 
 class ServiceClient:

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en" data-theme="bag-end">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1b130d">
+  <title>You're offline</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #1b130d;
+      --surface: #2c1e13;
+      --edge: #b08d5785;
+      --text: #f1e6cf;
+      --text-muted: #d3c3a5;
+      --accent: #e8a33c;
+      --radius-lg: 20px;
+      --space-4: 1rem;
+      --space-5: 1.5rem;
+      --space-6: 2.5rem;
+      --tap-min: 44px;
+    }
+    html { min-height: 100%; background: var(--bg); color: var(--text); }
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      box-sizing: border-box;
+      margin: 0;
+      padding: var(--space-5);
+      display: grid;
+      place-items: center;
+      font: 1rem/1.6 Georgia, serif;
+    }
+    main {
+      width: min(100%, 32rem);
+      box-sizing: border-box;
+      padding: var(--space-6);
+      border: 1px solid var(--edge);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+    }
+    h1 { margin: 0 0 var(--space-4); line-height: 1.2; }
+    p { margin: 0 0 var(--space-5); color: var(--text-muted); }
+    a {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--tap-min);
+      padding: 0 var(--space-4);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-lg);
+      color: var(--text);
+      text-decoration: none;
+    }
+    a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>The road is quiet for now.</h1>
+    <p>You're offline. Check your connection, then try again.</p>
+    <a href="/">Try again</a>
+  </main>
+</body>
+</html>

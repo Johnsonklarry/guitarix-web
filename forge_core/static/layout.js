@@ -44,33 +44,109 @@ window.ForgeLayout = {
     },
 
     'nextcloud-summary': function renderNextcloudSummary(bodyEl, options, tile) {
+      const opts = options || {};
       const source = (tile && (tile.nextcloud_payload || tile.data))
-        || (options && (options.nextcloud_payload || options.data));
-      if (!source || source.status === 'unavailable' || source.authorized === false) {
-        window.ForgeLayout.renderUnavailable(bodyEl, 'Unconfigured or offline');
+        || (opts.nextcloud_payload || opts.data);
+
+      const renderSource = (data) => {
+        if (!data || data.authorized === false || data.status === 'unconfigured') {
+          window.ForgeLayout.renderUnavailable(bodyEl, 'Unconfigured');
+          return;
+        }
+        if (data.status === 'unavailable') {
+          window.ForgeLayout.renderUnavailable(bodyEl, 'Offline');
+          return;
+        }
+        const wrapper = document.createElement('div');
+        wrapper.className = 'forge-nextcloud-summary';
+
+        const events = document.createElement('ul');
+        events.className = 'forge-nextcloud-events';
+        (data.events || []).forEach(event => {
+          const item = document.createElement('li');
+          item.textContent = event.title || 'Untitled event';
+          events.appendChild(item);
+        });
+        wrapper.appendChild(events);
+
+        const files = document.createElement('ul');
+        files.className = 'forge-nextcloud-files';
+        (data.files || []).forEach(file => {
+          const item = document.createElement('li');
+          item.textContent = file.name || 'Untitled file';
+          files.appendChild(item);
+        });
+        wrapper.appendChild(files);
+
+        bodyEl.appendChild(wrapper);
+      };
+
+      if (typeof opts.summary_provider === 'function') {
+        let provided;
+        try {
+          provided = opts.summary_provider();
+        } catch (err) {
+          window.ForgeLayout.renderUnavailable(bodyEl, 'Offline');
+          return null;
+        }
+        if (provided && typeof provided.then === 'function') {
+          provided.then(renderSource, () => {
+            window.ForgeLayout.renderUnavailable(bodyEl, 'Offline');
+          });
+        } else {
+          renderSource(provided);
+        }
         return null;
       }
+
+      renderSource(source);
+      return null;
+    },
+
+    'status-health': function renderStatusHealth(bodyEl, options, tile) {
+      const source = (tile && (tile.health || tile.data))
+        || (options && (options.health || options.data));
       const wrapper = document.createElement('div');
-      wrapper.className = 'forge-nextcloud-summary';
+      wrapper.className = 'forge-status-health';
 
-      const events = document.createElement('ul');
-      events.className = 'forge-nextcloud-events';
-      (source.events || []).forEach(event => {
-        const item = document.createElement('li');
-        item.textContent = event.title || 'Untitled event';
-        events.appendChild(item);
-      });
-      wrapper.appendChild(events);
+      if (!source) {
+        wrapper.classList.add('forge-status-health-unknown');
+        const unknown = document.createElement('div');
+        unknown.className = 'forge-status-health-state';
+        unknown.textContent = 'unknown';
+        wrapper.appendChild(unknown);
+        bodyEl.appendChild(wrapper);
+        return null;
+      }
 
-      const files = document.createElement('ul');
-      files.className = 'forge-nextcloud-files';
-      (source.files || []).forEach(file => {
-        const item = document.createElement('li');
-        item.textContent = file.name || 'Untitled file';
-        files.appendChild(item);
-      });
-      wrapper.appendChild(files);
+      const entries = Array.isArray(source) ? source : (source.entries || []);
+      const limit = options && Number.isInteger(options.limit) ? options.limit : entries.length;
+      const showOk = !!(options && options.show_ok);
+      const list = document.createElement('ul');
+      list.className = 'forge-status-health-list';
 
+      entries
+        .filter(entry => showOk || (entry.status && entry.status !== 'ok'))
+        .slice(0, limit)
+        .forEach(entry => {
+          const item = document.createElement('li');
+          item.className = 'forge-status-health-item';
+          item.dataset.status = entry.status || 'unknown';
+          const name = document.createElement('span');
+          name.className = 'forge-status-health-name';
+          name.textContent = entry.name || 'unnamed';
+          item.appendChild(name);
+          list.appendChild(item);
+        });
+
+      if (list.childNodes.length) {
+        wrapper.appendChild(list);
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'forge-status-health-empty';
+        empty.textContent = 'No status data';
+        wrapper.appendChild(empty);
+      }
       bodyEl.appendChild(wrapper);
       return null;
     },
@@ -124,6 +200,52 @@ window.ForgeLayout = {
         wrapper.appendChild(empty);
       }
       bodyEl.appendChild(wrapper);
+      return null;
+    },
+
+    'node-red-flows': function renderNodeRedFlows(bodyEl, options, tile) {
+      const source = (tile && (tile.flows_payload || tile.data))
+        || (options && (options.flows_payload || options.data));
+      if (!source || source.status === 'unavailable') {
+        window.ForgeLayout.renderUnavailable(bodyEl, 'Unavailable');
+        return null;
+      }
+      const list = document.createElement('ul');
+      list.className = 'forge-node-red-flows';
+      (source.flows || []).forEach(flow => {
+        const item = document.createElement('li');
+        item.className = 'forge-node-red-flow';
+        item.dataset.status = flow.status || 'unknown';
+        item.textContent = flow.name || 'unnamed';
+        list.appendChild(item);
+      });
+      bodyEl.appendChild(list);
+      return null;
+    },
+
+    'node-red-log': function renderNodeRedLog(bodyEl, options, tile) {
+      const source = (tile && (tile.log_payload || tile.data))
+        || (options && (options.log_payload || options.data));
+      if (!source || source.status === 'unavailable') {
+        window.ForgeLayout.renderUnavailable(bodyEl, 'Unavailable');
+        return null;
+      }
+      const list = document.createElement('ul');
+      list.className = 'forge-node-red-log';
+      (source.events || []).forEach(event => {
+        const item = document.createElement('li');
+        item.className = 'forge-node-red-log-entry';
+        const timestamp = document.createElement('span');
+        timestamp.className = 'forge-node-red-timestamp';
+        timestamp.textContent = event.timestamp || '';
+        const message = document.createElement('span');
+        message.className = 'forge-node-red-message';
+        message.textContent = event.message || '';
+        item.appendChild(timestamp);
+        item.appendChild(message);
+        list.appendChild(item);
+      });
+      bodyEl.appendChild(list);
       return null;
     }
   },

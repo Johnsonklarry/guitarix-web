@@ -1,0 +1,141 @@
+/* Opt in with html[data-ambient="embers|rain|stars|snow|fireflies"].
+   The two fixed layers sit behind body content. SVG tiles are masks so their
+   colours come from the active theme rather than from the SVG itself. */
+html[data-ambient="embers"],
+html[data-ambient="rain"],
+html[data-ambient="stars"],
+html[data-ambient="snow"],
+html[data-ambient="fireflies"] {
+  --motion-ease-calm: ease-in-out;
+  --motion-ease-drift: linear;
+  --motion-duration-calm: 12s;
+  --motion-duration-drift: 24s;
+  --ambient-effective-opacity: min(var(--ambient-max-opacity, .35), .35);
+}
+
+html[data-ambient][data-mode="oled"],
+html[data-ambient][data-oled="true"] {
+  --ambient-effective-opacity: min(var(--ambient-max-opacity, .35), .12);
+}
+
+html[data-ambient="embers"] body,
+html[data-ambient="rain"] body,
+html[data-ambient="stars"] body,
+html[data-ambient="snow"] body,
+html[data-ambient="fireflies"] body {
+  isolation: isolate;
+}
+
+html[data-ambient="embers"] body::before,
+html[data-ambient="embers"] body::after,
+html[data-ambient="rain"] body::before,
+html[data-ambient="rain"] body::after,
+html[data-ambient="stars"] body::before,
+html[data-ambient="stars"] body::after,
+html[data-ambient="snow"] body::before,
+html[data-ambient="snow"] body::after,
+html[data-ambient="fireflies"] body::before,
+html[data-ambient="fireflies"] body::after {
+  content: "";
+  position: fixed;
+  inset: -15%;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--ambient-colour, var(--accent));
+  mask-image: var(--ambient-tile);
+  -webkit-mask-image: var(--ambient-tile);
+  mask-size: var(--ambient-tile-size, 180px 180px);
+  -webkit-mask-size: var(--ambient-tile-size, 180px 180px);
+  opacity: var(--ambient-effective-opacity);
+  animation: tk-ambient-drift var(--motion-duration-drift) var(--motion-ease-drift) infinite alternate;
+}
+
+html[data-ambient] body::after {
+  opacity: calc(var(--ambient-effective-opacity) * .5);
+  mask-position: 73px 91px;
+  -webkit-mask-position: 73px 91px;
+  animation: tk-ambient-calm var(--motion-duration-calm) var(--motion-ease-calm) infinite alternate;
+}
+
+html[data-ambient="embers"] {
+  --ambient-colour: var(--accent);
+  --ambient-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Ccircle cx='23' cy='139' r='2' fill='white'/%3E%3Ccircle cx='91' cy='47' r='1.5' fill='white'/%3E%3Ccircle cx='151' cy='112' r='2.5' fill='white'/%3E%3C/svg%3E");
+}
+html[data-ambient="rain"] {
+  --ambient-colour: var(--info);
+  --ambient-tile-size: 160px 200px;
+  --ambient-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='200'%3E%3Cg stroke='white' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M19 25l-7 24M78 112l-7 24M139 53l-7 24M48 172l-5 18'/%3E%3C/g%3E%3C/svg%3E");
+}
+html[data-ambient="stars"] {
+  --ambient-colour: var(--text-muted);
+  --ambient-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cg fill='white'%3E%3Ccircle cx='17' cy='28' r='1'/%3E%3Ccircle cx='113' cy='45' r='1.5'/%3E%3Ccircle cx='63' cy='143' r='1'/%3E%3Ccircle cx='157' cy='123' r='1'/%3E%3C/g%3E%3C/svg%3E");
+}
+html[data-ambient="snow"] {
+  --ambient-colour: var(--text);
+  --ambient-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cg fill='white'%3E%3Ccircle cx='31' cy='42' r='2'/%3E%3Ccircle cx='121' cy='97' r='3'/%3E%3Ccircle cx='70' cy='158' r='2'/%3E%3C/g%3E%3C/svg%3E");
+}
+html[data-ambient="fireflies"] {
+  --ambient-colour: var(--ok);
+  --ambient-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cg fill='white'%3E%3Ccircle cx='37' cy='131' r='3'/%3E%3Ccircle cx='136' cy='63' r='2'/%3E%3C/svg%3E");
+}
+
+html[data-ambient="rain"] body::before,
+html[data-ambient="rain"] body::after {
+  animation-name: tk-ambient-rain;
+  animation-duration: var(--motion-duration-calm);
+}
+html[data-ambient="stars"] body::before,
+html[data-ambient="stars"] body::after,
+html[data-ambient="fireflies"] body::after {
+  animation-name: tk-ambient-twinkle;
+}
+html[data-ambient="snow"] body::before,
+html[data-ambient="snow"] body::after {
+  animation-name: tk-ambient-snow;
+}
+
+@keyframes tk-ambient-drift {
+  from { transform: translate3d(-2%, 3%, 0); }
+  to { transform: translate3d(2%, -3%, 0); }
+}
+@keyframes tk-ambient-calm {
+  from { transform: translate3d(2%, -2%, 0); }
+  to { transform: translate3d(-2%, 2%, 0); }
+}
+@keyframes tk-ambient-rain {
+  from { transform: translate3d(2%, -8%, 0); }
+  to { transform: translate3d(-2%, 8%, 0); }
+}
+@keyframes tk-ambient-snow {
+  from { transform: translate3d(-3%, -6%, 0); }
+  to { transform: translate3d(3%, 6%, 0); }
+}
+@keyframes tk-ambient-twinkle {
+  from { opacity: calc(var(--ambient-effective-opacity) * .3); }
+  to { opacity: var(--ambient-effective-opacity); }
+}
+
+.tk-ambient-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+html[data-ambient-render="canvas"] body::before,
+html[data-ambient-render="canvas"] body::after {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  html[data-ambient] body::before,
+  html[data-ambient] body::after,
+  .tk-ambient-canvas { display: none; }
+}
+html[data-fx="off"] body::before,
+html[data-fx="off"] body::after,
+html[data-fx="off"] .tk-ambient-canvas { display: none; }
+@media print {
+  html[data-ambient] body::before,
+  html[data-ambient] body::after,
+  .tk-ambient-canvas { display: none; }
+}
