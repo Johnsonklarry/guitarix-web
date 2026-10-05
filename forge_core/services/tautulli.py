@@ -152,6 +152,132 @@ def notification_log(limit=50, *, base_url="http://127.0.0.1:8181", api_key="", 
     return {"result": "success", "data": records}
 
 
+def _history_records(response):
+    """Return the upstream record list from a decoded history response, or ``[]``.
+
+    Records live under ``data.data``; some responses wrap that in a
+    ``response`` object.  Anything else yields no records.
+    """
+    if not isinstance(response, dict):
+        return []
+    container = response.get("response")
+    if isinstance(container, dict):
+        response = container
+    data = response.get("data")
+    if isinstance(data, dict):
+        data = data.get("data")
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _history_int(value):
+    """Coerce a history count/duration to ``int``, or ``None`` when absent.
+
+    Booleans, non-numeric strings and other unusable values yield ``None``
+    rather than raising.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            try:
+                return int(float(text))
+            except ValueError:
+                return None
+    return None
+
+
+def _normalize_history(record):
+    """Reduce one upstream history record to the allowlisted output fields."""
+    if not isinstance(record, dict):
+        return None
+    normalized = {}
+    for name, limit in (
+        ("title", 256),
+        ("media_type", 64),
+        ("user", 128),
+        ("player", 128),
+        ("session_key", 64),
+    ):
+        text = _alert_text(record.get(name), limit)
+        if text is not None:
+            normalized[name] = text
+    for name in ("play_count", "watched_status"):
+        normalized[name] = _history_int(record.get(name))
+    for name in ("duration", "watched_duration"):
+        normalized[name] = _history_int(record.get(name))
+    return normalized
+
+
+def history(limit=50, *, base_url="http://127.0.0.1:8181", api_key="", transport=None):
+    """Fetch Tautulli history with a clamped limit.
+
+    Invalid limits (<= 0 or non-int) are coerced or defaulted, and values
+    greater than MAX_NOTIFICATION_LOG_LIMIT (100) are clamped.  At most the
+    clamped number of records is returned even when upstream sends more.
+    Counts (``play_count``, ``watched_status``) and durations (``duration``,
+    ``watched_duration``) are normalized to integers, or ``None`` when absent
+    or unusable, without raising.
+    """
+    try:
+        limit_val = int(limit)
+    except (ValueError, TypeError):
+        limit_val = 50
+
+    if limit_val <= 0:
+        limit_val = 50
+    elif limit_val > MAX_NOTIFICATION_LOG_LIMIT:
+        limit_val = MAX_NOTIFICATION_LOG_LIMIT
+
+    params = {
+        "cmd": "get_history",
+        "length": str(limit_val),
+    }
+    if api_key:
+        params["apikey"] = api_key
+
+    query = urlencode(params)
+    url = f"{base_url.rstrip('/')}/api/v2?{query}"
+
+    if transport is not None:
+        if callable(transport):
+            response = transport(url=url, params=params, limit=limit_val)
+        elif hasattr(transport, "get"):
+            response = transport.get(url, params=params)
+        elif hasattr(transport, "request"):
+            response = transport.request("GET", url)
+        else:
+            raise TypeError("unsupported transport")
+
+        if isinstance(response, str):
+            response = json.loads(response)
+        elif isinstance(response, bytes):
+            response = json.loads(response.decode("utf-8"))
+    else:
+        req = Request(url, headers={"User-Agent": "Forge/1.0"})
+        with urlopen(req) as resp:
+            response = json.loads(resp.read().decode("utf-8"))
+
+    records = []
+    for record in _history_records(response):
+        normalized = _normalize_history(record)
+        if normalized is not None:
+            records.append(normalized)
+        if len(records) >= limit_val:
+            break
+    return {"result": "success", "data": records}
+
+
 def _alert_field(payload, name):
     """Read ``name`` from a mapping or an attribute-style object."""
     if isinstance(payload, dict):

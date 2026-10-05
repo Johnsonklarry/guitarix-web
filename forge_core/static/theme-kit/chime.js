@@ -21,6 +21,11 @@
     warn: [
       { freq: 392, start: 0, duration: 0.16, type: "triangle" },
       { freq: 261.63, start: 0.16, duration: 0.3, type: "triangle" }
+    ],
+    appliance_done: [
+      { freq: 523.25, start: 0, duration: 0.15, type: "sine" },
+      { freq: 659.25, start: 0.15, duration: 0.15, type: "sine" },
+      { freq: 783.99, start: 0.3, duration: 0.25, type: "sine" }
     ]
   };
 

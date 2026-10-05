@@ -24,7 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__all__ = ["Client", "HomeAssistantError", "NotAllowed", "from_env"]
+__all__ = ["CecDisplayGuard", "Client", "HomeAssistantError", "NotAllowed", "from_env", "run_cec_guard"]
 
 _WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -271,3 +271,57 @@ class Client:
 def from_env(environ=None):
     """Build a :class:`Client` from ``HOME_ASSISTANT_*`` environment variables."""
     return Client.from_env(environ)
+
+
+class CecDisplayGuard:
+    """Watch presence entity states and blank/wake a CEC display via media_player services."""
+
+    def __init__(self, client: Client, display_entity_id: str, entity_ids: list[str] | set[str]):
+        self.client = client
+        self.display_entity_id = display_entity_id
+        self.entity_ids = set(entity_ids)
+        self.occupant_states: dict[str, str] = {}
+        self._display_state: str | None = None
+
+    def is_present(self, state: str | None) -> bool:
+        if not state:
+            return False
+        return state.lower() in {"on", "home", "detected", "true", "active", "present"}
+
+    def any_present(self) -> bool:
+        return any(self.is_present(state) for state in self.occupant_states.values())
+
+    def update_state(self, entity_id: str, new_state: str | None) -> None:
+        if entity_id not in self.entity_ids:
+            return
+        self.occupant_states[entity_id] = new_state or ""
+        self._sync_display()
+
+    def _sync_display(self) -> None:
+        if not self.occupant_states:
+            return
+        target = "on" if self.any_present() else "off"
+        if self._display_state == target:
+            return
+        if target == "on":
+            self.client.call_service("media_player", "turn_on", entity_id=self.display_entity_id)
+        else:
+            self.client.call_service("media_player", "turn_off", entity_id=self.display_entity_id)
+        self._display_state = target
+
+    def run(self) -> None:
+        for event in self.client.subscribe_states(entity_ids=self.entity_ids):
+            data = event.get("data", {})
+            entity_id = data.get("entity_id")
+            new_state_obj = data.get("new_state")
+            if entity_id is None and new_state_obj:
+                entity_id = new_state_obj.get("entity_id")
+            if entity_id and entity_id in self.entity_ids:
+                state_val = new_state_obj.get("state") if isinstance(new_state_obj, dict) else None
+                self.update_state(entity_id, state_val)
+
+
+def run_cec_guard(client: Client, display_entity_id: str, entity_ids: list[str] | set[str]) -> None:
+    """Run CecDisplayGuard event loop."""
+    guard = CecDisplayGuard(client, display_entity_id, entity_ids)
+    guard.run()
