@@ -91,3 +91,31 @@
   background: var(--surface-2);
   font-weight: 600;
 }
+
+.forge-node-red-flows,
+.forge-node-red-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.forge-node-red-flow,
+.forge-node-red-log-entry {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.forge-node-red-flow {
+  justify-content: space-between;
+}
+
+.forge-node-red-timestamp {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+}
+
+.forge-node-red-message {
+  color: var(--text);
+}

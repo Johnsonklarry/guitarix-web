@@ -51,11 +51,57 @@ class TautulliClient:
         return f"TautulliClient(base_url={self.base_url!r})"
 
 
+def _notification_records(response):
+    """Return the upstream record list from a decoded response, or ``[]``.
+
+    Records live under ``data.data``; some responses wrap that in a
+    ``response`` object.  Anything else yields no records.
+    """
+    if not isinstance(response, dict):
+        return []
+    container = response.get("response")
+    if isinstance(container, dict):
+        response = container
+    data = response.get("data")
+    if isinstance(data, dict):
+        data = data.get("data")
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _notification_status(value):
+    """Map an upstream success flag to ``success``/``failed``/``unknown``."""
+    if value is True or value == 1:
+        return "success"
+    if value is False or value == 0:
+        return "failed"
+    return "unknown"
+
+
+def _normalize_notification(record):
+    """Reduce one upstream record to the allowlisted output fields."""
+    if not isinstance(record, dict):
+        return None
+    normalized = {}
+    event = _alert_text(record.get("notify_action"), 64)
+    if event is not None:
+        normalized["event"] = event
+    time = _alert_text(record.get("timestamp"), 64)
+    if time is not None:
+        normalized["time"] = time
+    normalized["status"] = _notification_status(record.get("success"))
+    return normalized
+
+
 def notification_log(limit=50, *, base_url="http://127.0.0.1:8181", api_key="", transport=None):
     """Fetch Tautulli notification log with a clamped limit.
 
     Invalid limits (<= 0 or non-int) are coerced or defaulted, and values
-    greater than MAX_NOTIFICATION_LOG_LIMIT (100) are clamped.
+    greater than MAX_NOTIFICATION_LOG_LIMIT (100) are clamped.  The decoded
+    response is reduced to an allowlisted ``{"result": "success", "data": []}``
+    shape holding at most the clamped number of records; raw upstream fields
+    (messages, credentials) are never copied through.
     """
     try:
         limit_val = int(limit)
@@ -88,14 +134,22 @@ def notification_log(limit=50, *, base_url="http://127.0.0.1:8181", api_key="", 
             raise TypeError("unsupported transport")
 
         if isinstance(response, str):
-            return json.loads(response)
-        if isinstance(response, bytes):
-            return json.loads(response.decode("utf-8"))
-        return response
+            response = json.loads(response)
+        elif isinstance(response, bytes):
+            response = json.loads(response.decode("utf-8"))
+    else:
+        req = Request(url, headers={"User-Agent": "Forge/1.0"})
+        with urlopen(req) as resp:
+            response = json.loads(resp.read().decode("utf-8"))
 
-    req = Request(url, headers={"User-Agent": "Forge/1.0"})
-    with urlopen(req) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    records = []
+    for record in _notification_records(response):
+        normalized = _normalize_notification(record)
+        if normalized is not None:
+            records.append(normalized)
+        if len(records) >= limit_val:
+            break
+    return {"result": "success", "data": records}
 
 
 def _alert_field(payload, name):

@@ -1,0 +1,11 @@
+{
+  "name": "Your App",
+  "short_name": "Your App",
+  "description": "Your app, available offline",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1b130d",
+  "theme_color": "#1b130d",
+  "icons": []
+}

@@ -14,6 +14,7 @@
     var frameId = null;
     var resizeTimer = null;
     var idleTimer = null;
+    var idleObserver = null;
     var rate = 60;
     var target = 1000 / rate;
     var previous = null;
@@ -86,7 +87,8 @@
     function resetIdle() {
       if (idleTimer !== null && typeof window.clearTimeout === 'function') window.clearTimeout(idleTimer);
       idleTimer = null;
-      if (!oled()) {
+      if (root.dataset.screensaver === 'off' ||
+          (!oled() && root.dataset.screensaver !== 'on')) {
         delete root.dataset.idle;
         return;
       }
@@ -275,6 +277,7 @@
       if (idleTimer !== null && typeof window.clearTimeout === 'function') window.clearTimeout(idleTimer);
       resizeTimer = null;
       idleTimer = null;
+      if (idleObserver) idleObserver.disconnect();
       removeHud();
     }
 
@@ -308,6 +311,13 @@
       }
     });
     root.dataset.visible = String(visible());
+    if (typeof MutationObserver === 'function') {
+      idleObserver = new MutationObserver(safe(resetIdle));
+      idleObserver.observe(root, {
+        attributes: true,
+        attributeFilter: ['data-mode', 'data-oled', 'data-screensaver', 'data-idle-minutes']
+      });
+    }
     resetIdle();
     if (window.location && /(?:^|[?&])fps=1(?:&|$)/.test(window.location.search || '')) hud(true);
     if (visible()) schedule();

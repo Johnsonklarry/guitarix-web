@@ -209,10 +209,11 @@
 
   // Two controls: a Theme <select> and a Mode group of segmented buttons
   // (Light / Dark / OLED / System), 44px targets via .tk-tap, aria-pressed on the active mode.
-  function mountSwitcher(container) {
+  function mountSwitcher(container, options) {
     if (!container || typeof container.appendChild !== "function") {
       throw new TypeError("Expected a container element");
     }
+    options = options || {};
 
     var wrapper = document.createElement("div");
     var label = document.createElement("label");
@@ -340,6 +341,10 @@
     wrapper.appendChild(group);
     wrapper.appendChild(details);
     container.appendChild(wrapper);
+    var unmountComfort = null;
+    if (options.comfort && window.ThemeKit && window.ThemeKit.comfort) {
+      unmountComfort = window.ThemeKit.comfort.mount(wrapper);
+    }
     update(get());
 
     var unsubscribe = onChange(update);
@@ -348,6 +353,7 @@
     return function () {
       unsubscribe();
       document.removeEventListener("themekit:hidden", hiddenListener);
+      if (unmountComfort) unmountComfort();
       wrapper.remove();
     };
   }
@@ -509,7 +515,9 @@
     }
   }
 
+  var comfort = window.ThemeKit && window.ThemeKit.comfort || window.ThemeKitComfort;
   window.ThemeKit = {
+    comfort: comfort,
     themes: themes,
     modes: modes,
     hide: hide,
@@ -523,6 +531,7 @@
     mountSwitcher: mountSwitcher,
     onChange: onChange,
     animate: animate,
-    burnInGuard: burnInGuard
+    burnInGuard: burnInGuard,
+    ambient: window.ThemeKitAmbient
   };
 }());

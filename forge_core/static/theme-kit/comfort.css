@@ -1,0 +1,97 @@
+/* Load after themes.css. These overrides use the kit's shared tokens. */
+html[data-comfort="standard"] {
+  --text-base: max(16px, 1rem);
+  --tap-min: 44px;
+}
+
+html[data-comfort="comfortable"] {
+  --text-base: max(18px, 1.12rem);
+  --tap-min: 52px;
+  --space-1: .28rem;
+  --space-2: .56rem;
+  --space-3: .84rem;
+  --space-4: 1.12rem;
+  --space-5: 1.68rem;
+  --space-6: 2.8rem;
+  line-height: 1.6;
+}
+
+html[data-comfort="large"] {
+  --text-base: max(20px, 1.25rem);
+  --tap-min: 64px;
+  --space-1: .3125rem;
+  --space-2: .625rem;
+  --space-3: .9375rem;
+  --space-4: 1.25rem;
+  --space-5: 1.875rem;
+  --space-6: 3.125rem;
+  line-height: 1.7;
+}
+
+html[data-comfort="max"] {
+  --text-base: max(22.4px, 1.4rem);
+  --tap-min: 72px;
+  --space-1: .35rem;
+  --space-2: .7rem;
+  --space-3: 1.05rem;
+  --space-4: 1.4rem;
+  --space-5: 2.1rem;
+  --space-6: 3.5rem;
+  line-height: 1.8;
+}
+
+html[data-comfort="max"],
+html[data-comfort-contrast="on"] {
+  --text-muted: var(--text);
+  --edge: var(--edge-strong);
+  --focus-ring: 0 0 0 4px var(--accent-strong);
+}
+
+.tk-comfort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--text-base);
+}
+
+.tk-comfort label {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-min);
+  gap: var(--space-1);
+}
+
+.tk-comfort select,
+.tk-comfort input {
+  min-height: var(--tap-min);
+}
+
+.tk-comfort input[type="checkbox"] {
+  min-width: var(--tap-min);
+  accent-color: var(--accent);
+}
+
+html[data-comfort-motion="off"] *,
+html[data-comfort-motion="off"] *::before,
+html[data-comfort-motion="off"] *::after,
+html[data-fx="off"] *,
+html[data-fx="off"] *::before,
+html[data-fx="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html *,
+  html *::before,
+  html *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
