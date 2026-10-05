@@ -11,12 +11,32 @@ both as a mapping (``device.properties["battery"]``) and as attributes
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 
 class Zigbee2MQTTError(ValueError):
     """Raised when a topic or payload cannot be parsed."""
+
+
+#: Default temperature (degrees Celsius) at or below which a freeze alert fires.
+DEFAULT_FREEZE_THRESHOLD = 0.0
+
+#: Default window (seconds) during which an identical alert is suppressed.
+DEFAULT_DEBOUNCE_SECONDS = 300.0
+
+#: Plain-language shutoff instruction for a detected water leak.
+WATER_LEAK_INSTRUCTION = (
+    "Water leak detected: shut off the water supply immediately and check "
+    "the area for damage."
+)
+
+#: Plain-language shutoff instruction for a detected freeze condition.
+FREEZE_INSTRUCTION = (
+    "Freeze risk detected: shut off the water supply to prevent burst pipes "
+    "and protect the affected area."
+)
 
 
 @dataclass
@@ -33,6 +53,9 @@ class ZigbeeDevice:
     device_id: str
     topic: str
     properties: dict = field(default_factory=dict)
+    alert: str | None = None
+    alert_type: str | None = None
+    alert_instruction: str | None = None
 
     def __getattr__(self, name: str) -> Any:
         # Dataclass fields resolve through normal lookup; only unknown names
@@ -56,13 +79,62 @@ class ZigbeeDevice:
 class Zigbee2MQTT:
     """Parse messages published by a Zigbee2MQTT bridge."""
 
-    def __init__(self, base_topic: str = "zigbee2mqtt") -> None:
+    def __init__(
+        self,
+        base_topic: str = "zigbee2mqtt",
+        freeze_threshold: float = DEFAULT_FREEZE_THRESHOLD,
+        debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
+    ) -> None:
         if not isinstance(base_topic, str):
             raise TypeError("base_topic must be a string")
         normalized = base_topic.strip("/")
         if not normalized:
             raise ValueError("base_topic must not be empty")
         self.base_topic = normalized
+        self.freeze_threshold = freeze_threshold
+        self.debounce_seconds = debounce_seconds
+        # device_id -> (alert_type, monotonic timestamp of last report)
+        self._last_alert: dict[str, tuple[str, float]] = {}
+
+    def _evaluate_alert(self, device: ZigbeeDevice) -> None:
+        """Set alert fields on ``device`` for leak/freeze conditions.
+
+        ``water_leak`` truthy values take precedence over low temperatures.
+        The alert is suppressed when an identical alert type was already
+        reported for this device within ``debounce_seconds``.
+        """
+        alert_type: str | None = None
+        instruction: str | None = None
+
+        if device.get("water_leak"):
+            alert_type = "water_leak"
+            instruction = WATER_LEAK_INSTRUCTION
+        else:
+            temperature = device.get("temperature")
+            if isinstance(temperature, (int, float)) and not isinstance(
+                temperature, bool
+            ):
+                if temperature <= self.freeze_threshold:
+                    alert_type = "freeze"
+                    instruction = FREEZE_INSTRUCTION
+
+        if alert_type is None:
+            return
+
+        now = time.monotonic()
+        previous = self._last_alert.get(device.device_id)
+        if previous is not None:
+            previous_type, previous_time = previous
+            if (
+                previous_type == alert_type
+                and now - previous_time < self.debounce_seconds
+            ):
+                return
+
+        self._last_alert[device.device_id] = (alert_type, now)
+        device.alert = alert_type
+        device.alert_type = alert_type
+        device.alert_instruction = instruction
 
     def parse_message(self, topic: str, payload: bytes) -> ZigbeeDevice:
         """Parse one ``topic``/``payload`` pair into a :class:`ZigbeeDevice`.
@@ -99,4 +171,6 @@ class Zigbee2MQTT:
                 data = {"value": text}
         if not isinstance(data, dict):
             data = {"value": data}
-        return ZigbeeDevice(device_id=device_id, topic=topic, properties=data)
+        device = ZigbeeDevice(device_id=device_id, topic=topic, properties=data)
+        self._evaluate_alert(device)
+        return device

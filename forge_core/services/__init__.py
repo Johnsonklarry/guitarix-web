@@ -5,5 +5,6 @@ from __future__ import annotations
 
 from forge_core.services.TrueNAS import TrueNASClient, TrueNASError
 from .roku import RokuECP, RokuError
+from .spotify import PremiumRequiredError, SpotifyClient
 
-__all__ = ["RokuECP", "RokuError", "TrueNASClient", "TrueNASError"]
+__all__ = ["PremiumRequiredError", "RokuECP", "RokuError", "SpotifyClient", "TrueNASClient", "TrueNASError"]

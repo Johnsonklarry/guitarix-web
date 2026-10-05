@@ -107,6 +107,18 @@ class Client:
         rounded = round(float(level))
         self._command(f"MV{rounded:02d}")
 
+    def volume_set(self, level: int | float) -> None:
+        """Set volume level clamped to 0-100."""
+        clamped = max(0.0, min(100.0, float(level)))
+        rounded = round(clamped)
+        self._command(f"MV{rounded:02d}")
+
+    def volume_step(self, delta: int | float) -> None:
+        """Step volume level by delta, clamped to 0-100."""
+        current = self.status().get("volume")
+        base = float(current) if current is not None else 0.0
+        self.volume_set(base + float(delta))
+
     def volume_up(self) -> None:
         """Increase volume by 1 step."""
         self._command("MVUP")
@@ -118,6 +130,22 @@ class Client:
     def set_mute(self, mute: bool) -> None:
         """Mute or unmute receiver."""
         self._command("MUON" if mute else "MUOFF")
+
+    def mute(self) -> None:
+        """Mute the receiver."""
+        self.set_mute(True)
+
+    def unmute(self) -> None:
+        """Unmute the receiver."""
+        self.set_mute(False)
+
+    def mute_status(self) -> bool:
+        """Return mute status."""
+        return bool(self.status().get("mute"))
+
+    def mute_toggle(self) -> None:
+        """Toggle mute state."""
+        self.set_mute(not self.mute_status())
 
     def movie_mode(self, input_source: str = "TV", volume: int = 50) -> None:
         """Helper to prepare receiver for movie night."""
