@@ -47,6 +47,28 @@ html[data-comfort-contrast="on"] {
   --focus-ring: 0 0 0 4px var(--accent-strong);
 }
 
+button,
+[role="button"],
+a.button,
+input,
+select,
+summary {
+  min-height: var(--tap-min);
+  min-width: var(--tap-min);
+}
+
+html[data-comfort-contrast="on"] {
+  --text: var(--text-strong);
+}
+
+html[data-comfort-contrast="on"] a {
+  text-decoration: underline;
+}
+
+html[data-comfort-contrast="on"] :focus-visible {
+  outline: 2px solid var(--accent-strong, currentColor);
+}
+
 .tk-comfort {
   display: flex;
   flex-wrap: wrap;

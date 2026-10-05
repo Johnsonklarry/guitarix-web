@@ -460,6 +460,12 @@ class ForgeAPI:
             return status, headers, payload
         if route == "/offline.html" and method == "GET":
             return self._static("theme-kit/pwa/offline.html")
+        if route == "/forge/theme-kit/themes.json" and method == "GET":
+            status, headers, payload = self._static("theme-kit/themes.json")
+            if status == 200:
+                headers["Access-Control-Allow-Origin"] = "*"
+                headers["Cache-Control"] = "max-age=300"
+            return status, headers, payload
         if route == "/forge/designer" and method == "GET":
             return self._static("designer.html")
         if route.startswith("/forge/static/") and method == "GET":
