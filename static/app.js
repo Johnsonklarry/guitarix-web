@@ -471,7 +471,7 @@ function renderGroups(into, groups) {
       sw.addEventListener('click', function () {
         const next = sw.classList.contains('is-on') ? 0 : 1;
         applyToggle(group.toggle, next);
-        socket.emit('set_param', { id: group.toggle, value: next });
+        command(group.toggle, next, 'discrete');
       });
       switches[group.toggle] = sw;
       head.appendChild(sw);
@@ -624,6 +624,18 @@ function send(id, value) {
   });
 }
 
+/* One way in for every parameter write. Continuous values (sliders) are
+   coalesced through the outbox so a drag sends at most one message per
+   animation frame; discrete values (toggles, enums) are one-shot gestures
+   and go out immediately, since batching them would only add latency. */
+function command(id, value, kind) {
+  if (kind === 'discrete') {
+    socket.emit('set_param', { id: id, value: value });
+    return;
+  }
+  send(id, value);
+}
+
 function applyToggle(id, value) {
   const sw = switches[id];
   if (!sw) return;
@@ -714,7 +726,7 @@ function buildDiscrete(ctrl) {
       // answer in the same terms the engine used: a name if it reported a
       // name, the index if it reported an index
       const value = sel._kind === 'key' && o.key != null ? o.key : o.value;
-      socket.emit('set_param', { id: ctrl.id, value: value });
+      command(ctrl.id, value, 'discrete');
     });
     selects[ctrl.id] = sel;
     field.appendChild(sel);
@@ -734,7 +746,7 @@ function buildDiscrete(ctrl) {
   sw.addEventListener('click', function () {
     const next = sw.classList.contains('is-on') ? 0 : 1;
     applyToggle(ctrl.id, next);
-    socket.emit('set_param', { id: ctrl.id, value: next });
+    command(ctrl.id, next, 'discrete');
   });
   switches[ctrl.id] = sw;
   applyToggle(ctrl.id, ctrl.value);
