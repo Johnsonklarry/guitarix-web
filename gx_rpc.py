@@ -68,6 +68,12 @@ PRESET_METHODS = {
     "move":         None,
 }
 
+# Verified against guitarix 0.44.1 (build 0.44.1-1, Debian bookworm arm64)
+# with `python3 probe_rpc.py`: every name above answered "silent" (notify-only)
+# and no candidate returned JSON-RPC -32601. "move" stays None because no
+# move/copy method exists in this build.
+VERIFIED_BUILD = "guitarix 0.44.1"
+
 CANDIDATES = {
     "save_current": ["save_current_preset", "save_preset_current", "setpreset_save"],
     "save_as":      ["save_preset", "insert_preset", "append_preset", "create_preset"],
