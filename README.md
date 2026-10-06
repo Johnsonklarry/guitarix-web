@@ -229,6 +229,12 @@ Until then nothing fails silently — a missing method shows up as a message in
 the UI naming the method it tried. Setting an entry to `None` hides that
 button entirely.
 
+The `PRESET_METHODS` block shipped in `gx_rpc.py` was verified against
+**guitarix 0.44.1** (build 0.44.1-1, Debian bookworm arm64) with
+`python3 probe_rpc.py`: every name answered "silent" (notify-only) and no
+candidate returned JSON-RPC -32601. `move` is `None` because that build has no
+move/copy method, so the load-save-delete fallback is used.
+
 ## Importing presets
 
 **Import** in the presets toolbar takes a preset file -- pasted, opened, or
