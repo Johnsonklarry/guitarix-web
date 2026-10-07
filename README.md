@@ -261,6 +261,12 @@ The rules, which the parameter list also spells out:
 - With no base, settings a preset leaves out on a unit it uses go back to
   their defaults.
 
+When a preset names a base, the importer also compiles a **diff-only brief**
+locally (`compile_brief` in `presets_io.py`): only the parameters that differ
+from the base, each with its range and unit. Out-of-range values are clamped
+and unknown ids rejected before anything is sent, and the brief comes back
+with a structured error instead of a provider call when that happens.
+
 **Export the loaded preset** gives Claude a reference: "like this, but darker".
 
 ## Recording, reamping and backing tracks

@@ -54,6 +54,9 @@ let picked = null;           // { bank, name } chosen while organising
 let can = {};
 
 let state = { banks: [], bank: null, preset: null, values: {} };
+let stateVersion = 0;        // version of the state the page is showing
+let resyncing = false;       // a snapshot has been asked for and hasn't landed
+let resyncTimer = null;      // gives up on a snapshot request that never lands
 let online = false;          // engine reachable? read during the first render,
                              // so it has to be declared before applyLayout runs
 let linked = false;          // browser <-> web app socket up?
@@ -400,9 +403,20 @@ function renderPresets() {
 
 /* ------------------------------------------------------------------ knobs */
 
+/* One table of every parameter -> its view binding. Sliders, readouts,
+   switches and selects used to live in four maps that makeRange, buildDiscrete
+   and renderGroups each had to keep in step; a control is remembered here
+   once, so a re-render only has to forget it once. */
+const ControlRegistry = new Map();
+
+function bindControl(id, binding) {
+  ControlRegistry.set(id, binding);
+  return binding;
+}
+
 /* Rebuilding a container throws its controls away. Forget the ones inside it,
-   or the sliders/readouts/switches/selects maps keep the detached nodes (and
-   their listeners) alive, and a glide frame can keep running on a dead slider. */
+   or the maps keep the detached nodes (and their listeners) alive, and a
+   glide frame can keep running on a dead slider. */
 function releaseControls(into) {
   [sliders, readouts, switches, selects].forEach(function (map) {
     Object.keys(map).forEach(function (id) {
@@ -412,6 +426,10 @@ function releaseControls(into) {
       if (map === sliders) dragging.delete(id);
       delete map[id];
     });
+  });
+
+  ControlRegistry.forEach(function (binding, id) {
+    if (binding.el && into.contains(binding.el)) ControlRegistry.delete(id);
   });
 }
 
@@ -474,6 +492,18 @@ function renderGroups(into, groups) {
         command(group.toggle, next, 'discrete');
       });
       switches[group.toggle] = sw;
+      // applyValues() resolves an id through ControlRegistry alone, so the
+      // bypass has to be bound here too -- otherwise a remote change to it
+      // (another device, or a preset loading) finds no binding and is dropped.
+      bindControl(group.toggle, {
+        kind: 'switch',
+        el: sw,
+        apply: function (value, remote) {
+          const was = sw.classList.contains('is-on');
+          applyToggle(group.toggle, value);
+          if (remote && was !== sw.classList.contains('is-on')) flash(sw, 'is-remote');
+        }
+      });
       head.appendChild(sw);
     }
 
@@ -556,6 +586,7 @@ function makeRange(ctrl, valueEl) {
 
   sliders[ctrl.id] = input;
   readouts[ctrl.id] = valueEl;
+  bindControl(ctrl.id, { kind: 'range', el: input, readout: valueEl });
   valueEl.textContent = fmt(Number(ctrl.value));
   return input;
 }
@@ -729,6 +760,15 @@ function buildDiscrete(ctrl) {
       command(ctrl.id, value, 'discrete');
     });
     selects[ctrl.id] = sel;
+    bindControl(ctrl.id, {
+      kind: 'select',
+      el: sel,
+      apply: function (value, remote) {
+        const before = sel.value;
+        setChoice(sel, value);
+        if (remote && before !== sel.value) flash(sel, 'is-remote');
+      }
+    });
     field.appendChild(sel);
     return field;
   }
@@ -749,28 +789,110 @@ function buildDiscrete(ctrl) {
     command(ctrl.id, next, 'discrete');
   });
   switches[ctrl.id] = sw;
+  bindControl(ctrl.id, {
+    kind: 'switch',
+    el: sw,
+    apply: function (value, remote) {
+      const was = sw.classList.contains('is-on');
+      applyToggle(ctrl.id, value);
+      if (remote && was !== sw.classList.contains('is-on')) flash(sw, 'is-remote');
+    }
+  });
   applyToggle(ctrl.id, ctrl.value);
   return sw;
 }
 
+/* ----------------------------------------------------------------- deltas */
+
+/* The engine numbers every batch of changes it pushes. The batch that lands
+   has to be the one right after the version the page is holding: one that
+   steps further means an update went missing on the way here, and a gap can't
+   be patched out of the messages that survived it -- so ask for the whole
+   state instead of applying something that would be half right. */
+/* A version to count with, or null when the message doesn't carry one. A
+   version that isn't a finite number can't be placed in the sequence: as a
+   number it is neither behind us nor the one we're waiting for, so a malformed
+   message would look like a gap and ask for the whole state. It goes down the
+   unnumbered path with everything else instead. */
+function deltaVersion(v) {
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+
+function splitDelta(msg) {
+  if (!msg) return { version: null, values: {} };
+  // A delta arrives either as its parameters with a version beside them, or
+  // as a { version, values } envelope. Take both shapes -- and take the
+  // version through the same check whichever shape it comes in.
+  if (msg.values && typeof msg.values === 'object') {
+    return { version: deltaVersion(msg.version), values: msg.values };
+  }
+  const values = {};
+  let version = null;
+  Object.keys(msg).forEach(function (id) {
+    if (id === 'version') { version = deltaVersion(msg[id]); return; }
+    values[id] = msg[id];
+  });
+  return { version: version, values: values };
+}
+
+/* The values worth applying, or null when the delta is one we have already
+   seen or lands beyond a hole we can't fill ourselves. */
+function acceptDelta(msg) {
+  const delta = splitDelta(msg);
+  if (delta.version === null) return delta.values;   // unnumbered: take it as it comes
+  if (delta.version <= stateVersion) return null;    // already seen, nothing to do
+  if (delta.version !== stateVersion + 1) {
+    requestSnapshot('missed ' + (delta.version - stateVersion - 1)
+                    + ' update(s) before v' + delta.version);
+    return null;
+  }
+  stateVersion = delta.version;
+  return delta.values;
+}
+
+/* Long enough for a slow round trip, short enough that a request nobody
+   answered isn't sat on. */
+const RESYNC_TIMEOUT = 8000;
+
+let resyncRetries = 0;      // asks made since the last snapshot that landed
+
+/* One request at a time: the engine will hand over several more deltas before
+   the snapshot lands, and every one of them looks like another gap. An answer
+   that never comes -- a reply lost on the way, an engine with no snapshot to
+   give -- must not leave the flag up for good, or every later gap would be
+   dropped without asking again and the page would sit on values it can't
+   trust. Wait, let go, and ask once more; after that the next gap starts it
+   all again. */
+function requestSnapshot(reason) {
+  if (resyncing) return;
+  resyncing = true;
+  socket.emit('request_snapshot', { version: stateVersion, reason: reason || '' });
+  clearTimeout(resyncTimer);
+  resyncTimer = setTimeout(function () {
+    resyncing = false;
+    if (resyncRetries++ < 2) requestSnapshot('nothing answered ' + (reason || ''));
+  }, RESYNC_TIMEOUT);
+}
+
 function applyValues(values, remote) {
+  if (remote) {
+    values = acceptDelta(values);
+    if (!values) return;   // a repeat, or waiting on the snapshot that fills the hole
+  }
   Object.keys(values).forEach(function (id) {
     state.values[id] = values[id];
 
-    if (switches[id]) {
-      const was = switches[id].classList.contains('is-on');
-      applyToggle(id, values[id]);
-      if (remote && was !== switches[id].classList.contains('is-on')) flash(switches[id], 'is-remote');
-      return;
-    }
-    if (selects[id]) {
-      const before = selects[id].value;
-      setChoice(selects[id], values[id]);
-      if (remote && before !== selects[id].value) flash(selects[id], 'is-remote');
+    // One lookup decides who owns this parameter: a switch or a choice answers
+    // through its binding, and a fader keeps the path below, because it has to
+    // know whether the user is still holding it.
+    const bound = ControlRegistry.get(id);
+    if (bound && bound.kind !== 'range') {
+      bound.apply(values[id], remote);
       return;
     }
 
-    const input = sliders[id];
+    const input = bound ? bound.el : sliders[id];
     if (!input || dragging.has(id)) return;   // don't yank a knob mid-turn
 
     const out = readouts[id];
@@ -2561,7 +2683,20 @@ function when(epoch) {
 
 /* ------------------------------------------------------------------ socket */
 
-socket.on('connect', function () { setLinked(true); });
+socket.on('connect', function () {
+  setLinked(true);
+  resyncing = false;   // whatever we were waiting for died with the old socket
+  clearTimeout(resyncTimer);
+  resyncRetries = 0;
+  // Say where we are: the engine replays the deltas we missed, or answers
+  // 'resync' when our version is older than the history it still holds.
+  socket.emit('sync', { version: stateVersion });
+});
+
+/* The engine can't reach back as far as we are, so what we hold is missing
+   updates we will never see. Drop the deltas and take a whole snapshot. */
+socket.on('resync', function () { requestSnapshot('server asked'); });
+
 socket.on('disconnect', function () { setLinked(false); });
 
 socket.on('status', function (msg) {
@@ -2578,6 +2713,12 @@ socket.on('snapshot', function (snap) {
   // the same object sees every later change to the page's state.
   state = Object.assign({}, snap);
   setStatus(snap.connected);
+  // The snapshot is the truth: it is the version the page now holds, and it
+  // answers the snapshot we asked for.
+  stateVersion = Number(snap.version) || 0;
+  resyncing = false;
+  clearTimeout(resyncTimer);   // it landed: nothing left to give up on
+  resyncRetries = 0;
   if (!selectedBank || !snap.banks.some(function (b) { return b.name === selectedBank; })) {
     selectedBank = snap.bank || (snap.banks[0] && snap.banks[0].name) || null;
   }

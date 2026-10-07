@@ -21,6 +21,7 @@ lower priority than guitarix, so encoding can never take CPU from the amp.
 """
 
 import logging
+import math
 import queue
 import shutil
 import subprocess
@@ -32,6 +33,60 @@ from flask import Response
 import jackutil
 
 log = logging.getLogger("monitor")
+
+# The latest playback buffer each broadcast client has reported, in seconds,
+# keyed by the client's session id. Only the broadcast page sends this, and
+# only a finite, non-negative number is ever stored.
+_playback_buffers = {}
+_playback_buffers_lock = threading.Lock()
+
+
+def _session_id(sid):
+    """The session id of a socket, whatever shape the server hands it in."""
+    if sid is None:
+        return None
+    return getattr(sid, "sid", sid)
+
+
+def record_playback_buffer(sid, data):
+    """
+    Store the seconds buffered ahead that a broadcast client reported. Anything
+    that is not a finite, non-negative number is ignored, leaving the previous
+    value (if any) in place.
+    """
+    if not isinstance(data, dict):
+        return None
+    seconds = data.get("seconds")
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    key = _session_id(sid)
+    with _playback_buffers_lock:
+        _playback_buffers[key] = float(seconds)
+    return float(seconds)
+
+
+def playback_buffer(sid):
+    """The last valid buffer report from a client, or None if it never made one."""
+    with _playback_buffers_lock:
+        return _playback_buffers.get(_session_id(sid))
+
+
+def forget_playback_buffer(sid):
+    """Drop a client's stored report when its session ends."""
+    with _playback_buffers_lock:
+        _playback_buffers.pop(_session_id(sid), None)
+
+
+def register_broadcast_handlers(socketio):
+    """
+    Let broadcast clients report their playback buffer and nothing else. Every
+    other event stays blocked, exactly as GX_BROADCAST=1 intends.
+    """
+    socketio.on("playback_buffer")(lambda data, sid=None: record_playback_buffer(sid, data))
+    socketio.on("disconnect")(lambda sid=None: forget_playback_buffer(sid))
+
 
 CLIENT = "gxweb-mon"
 FFMPEG = "ffmpeg"

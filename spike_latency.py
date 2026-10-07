@@ -64,8 +64,39 @@ def parse_jack_iodelay(output):
 try:
     from flask import Flask, Response
     from flask_socketio import SocketIO
+    HAVE_FLASK = True
 except ImportError:
-    sys.exit("needs flask and flask-socketio: pip install -r requirements.txt")
+    # Importing this module must not require flask: the tests, and anything
+    # that only wants the timing helpers, run on a stdlib-only interpreter.
+    # Only actually serving needs it, and main() refuses without it.
+    HAVE_FLASK = False
+
+    class _UnavailableFlask(object):
+        """Just enough of Flask's shape to survive the decorators below."""
+
+        def __init__(self, *args, **kwargs):
+            self.config = {}
+
+        def route(self, *args, **kwargs):
+            return lambda fn: fn
+
+    class SocketIO(object):
+        """Stands in for flask_socketio so the import cannot fail."""
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def on(self, *args, **kwargs):
+            return lambda fn: fn
+
+        def emit(self, *args, **kwargs):
+            pass
+
+        def run(self, *args, **kwargs):
+            sys.exit("needs flask and flask-socketio: pip install -r requirements.txt")
+
+    Flask = _UnavailableFlask
+    Response = None
 
 import jackutil
 
@@ -191,9 +222,66 @@ def on_disconnect():
         state["listeners"] = max(0, state["listeners"] - 1)
 
 
+PING2_TIMEOUT = 2.0               # seconds to wait for the peer's ack
+
+
+def ping2_timed_out(payload):
+    """Default error handler: an unanswered round trip must not be silent."""
+    print("ping2: no ack within %.1fs" % PING2_TIMEOUT, file=sys.stderr)
+
+
+def emit_ping2(sio, payload=None, timeout=PING2_TIMEOUT, on_timeout=None):
+    """
+    Emit a server-initiated "ping2" and cap the round trip.
+
+    socket.emit() with an ack callback waits for ever: a peer that stops
+    answering leaves the exchange hanging and nothing reports it. A timer
+    fires the error callback instead. An ack that does arrive cancels the
+    timer; one that arrives late is ignored rather than firing the error a
+    second time. The "acked" flag, set under the lock, is what guarantees a
+    single firing -- cancelling the timer is not, and a late ack is ignored
+    because the flag is already set.
+
+    For a ping the server starts. Do NOT call this from on_ping2: the page
+    acks only the exchanges it initiates, so a ping sent in reply to one of
+    those is never acked and this timeout fires on the healthy path.
+    """
+    payload = {"t": now_ms(), **(payload or {})}
+    handler = on_timeout or ping2_timed_out
+    done = {"acked": False}
+    lock = threading.Lock()
+
+    def ack(reply=None):
+        with lock:
+            done["acked"] = True
+            timer.cancel()
+        return reply
+
+    def expire():
+        with lock:
+            if done["acked"]:
+                return
+            done["acked"] = True
+        handler(payload)
+
+    timer = threading.Timer(timeout, expire)
+    timer.daemon = True
+    timer.start()
+    sio.emit("ping2", payload, callback=ack)
+    return payload
+
+
 @socketio.on("ping2")
-def on_ping(msg):
-    """Round trip, so the page can line its clock up with ours."""
+def on_ping2(msg):
+    """
+    Round trip, so the page can line its clock up with ours.
+
+    The reply goes back as this handler's return value, and nothing else. The
+    page acks only the pings it starts, so an emit from here would be a
+    second, unanswered round trip whose timeout fires on the healthy path --
+    once per client ping. The timeout for the exchange that does happen lives
+    on the client's own emit (sync() in PAGE).
+    """
     client = msg.get("t") if isinstance(msg, dict) else None
     return {"client": client, "server": now_ms()}
 
@@ -456,6 +544,8 @@ def socketio_js():
 
 
 def main():
+    if not HAVE_FLASK:
+        sys.exit("needs flask and flask-socketio: pip install -r requirements.txt")
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[3].strip())
     ap.add_argument("--fake", action="store_true", help="generate a tone instead of using JACK")
     ap.add_argument("--source", default="gx_head_amp", help="JACK client or port to tap")

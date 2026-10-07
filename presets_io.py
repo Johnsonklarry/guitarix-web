@@ -196,6 +196,98 @@ def resolve_base(raw, banks):
     raise ImportProblem('The base preset "%s" isn\'t in your banks.' % text)
 
 
+def compile_brief(base_id, request, parameters=None, banks=None):
+    """
+    Compile a local preset request into a diff-only parameter brief.
+
+    `base_id` names the base preset ("Bank/Preset", {"bank", "preset"}, or a
+    bare preset name when only one bank has it). `request` is a mapping of
+    parameter id to requested value, the same shape as a preset's "params".
+
+    Returns a JSON-serialisable dict:
+
+        {
+          "format": "gxweb-brief/1",
+          "base": {"bank": ..., "preset": ...} | None,
+          "params": {id: {"value": v, "min": ..., "max": ..., "unit": ...}},
+          "rejected": [{"id": ..., "reason": ..., "suggestion": ...}],
+          "clamped": [{"id": ..., "given": ..., "used": ..., "range": [...]}],
+          "error": None | {"kind": ..., "message": ..., "details": [...]},
+        }
+
+    Only parameters that differ from the base preset appear under "params".
+    Out-of-range values are clamped and reported; unknown ids are rejected.
+    If anything is rejected or clamped, "error" is a structured error and
+    nothing is passed on to export_parameters.
+    """
+    parameters = parameters or {}
+    banks = banks or {}
+
+    base = resolve_base(base_id, banks) if base_id else None
+    base_params = {}
+    if base is not None:
+        bank, name = base
+        raw_base = banks.get(bank, {}).get(name)
+        if isinstance(raw_base, dict):
+            base_params = raw_base.get("params") or {}
+
+    umap = units(parameters)
+    params, rejected, clamped = {}, [], []
+
+    for pid, raw in (request or {}).items():
+        p = parameters.get(pid)
+        if p is None:
+            rejected.append({"id": pid, "reason": "isn't on this engine",
+                             "suggestion": suggest(pid, parameters)})
+            continue
+        if p.get("non_preset"):
+            rejected.append({"id": pid, "reason": "isn't stored in presets"})
+            continue
+        if plumbing(pid):
+            rejected.append({"id": pid, "reason": "is rack layout, not a sound setting"})
+            continue
+        try:
+            value, clamp = coerce(p, raw)
+        except Rejected as why:
+            rejected.append({"id": pid, "reason": str(why)})
+            continue
+        if isinstance(value, dict):
+            value = option_wire(value, base_params.get(pid))
+        if clamp:
+            clamped.append({"id": pid, "given": clamp[0], "used": clamp[1],
+                            "range": [p.get("min"), p.get("max")]})
+        if pid in base_params and str(base_params[pid]) == str(value):
+            continue
+        entry = {"value": _clean(value)}
+        if p.get("min") is not None:
+            entry["min"] = _clean(p.get("min"))
+        if p.get("max") is not None:
+            entry["max"] = _clean(p.get("max"))
+        unit = unit_for(pid, umap)
+        if unit:
+            entry["unit"] = unit
+        params[pid] = entry
+
+    error = None
+    if rejected or clamped:
+        details = [{"id": r["id"], "reason": r["reason"]} for r in rejected]
+        details += [{"id": c["id"], "reason": "out of range",
+                     "given": c["given"], "used": c["used"]} for c in clamped]
+        error = {"kind": "invalid-request",
+                 "message": "%d value(s) rejected or clamped; nothing sent to the provider."
+                            % len(details),
+                 "details": details}
+
+    return {
+        "format": "gxweb-brief/1",
+        "base": {"bank": base[0], "preset": base[1]} if base else None,
+        "params": params,
+        "rejected": rejected,
+        "clamped": clamped,
+        "error": error,
+    }
+
+
 # ------------------------------------------------------------------ units
 
 def plumbing(pid):
@@ -447,7 +539,7 @@ def plan(preset, parameters, current, others_off=False, reset_defaults=True):
 
     differs = sum(1 for pid, v in changes.items() if str(current.get(pid)) != str(v))
 
-    return changes, {
+    report = {
         "name": preset["name"],
         "notes": preset.get("notes", ""),
         "set": len(explicit),
@@ -460,6 +552,19 @@ def plan(preset, parameters, current, others_off=False, reset_defaults=True):
         "changes": len(changes),
         "differs": differs,
     }
+
+    # The diff-only brief for this request, compiled locally. It carries only
+    # the parameters that differ from the base, with ranges and units, and a
+    # structured error when anything was rejected or clamped -- so nothing
+    # invalid is ever passed on to export_parameters.
+    base_id = preset.get("base")
+    if base_id:
+        report["brief"] = compile_brief(base_id, preset["params"],
+                                        parameters=parameters, banks=preset.get("banks") or {})
+    else:
+        report["brief"] = compile_brief(None, preset["params"], parameters=parameters)
+
+    return changes, report
 
 
 # ------------------------------------------------------------------ export

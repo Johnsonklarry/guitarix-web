@@ -31,9 +31,11 @@ from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGE = "file://" + os.path.join(ROOT, "preview.html")
+# This audit drives preview.html only: it makes no claim about app.py or about
+# the content demo.py had before deletion (see tests/test_bash_16701.py).
 
 CONTROLS = ("button, a[href], select, input:not([type=hidden]), label.act, label.dry-toggle, "
-            "[role=tab], .takes__badge.is-action")
+            "[role=tab], .takes__badge.is-action, .jack-status, [data-jack-state]")
 WATCH = ["backgroundColor", "backgroundImage", "color", "borderTopColor", "boxShadow",
          "outlineStyle", "outlineColor", "transform", "opacity", "textDecorationLine", "filter"]
 
@@ -86,6 +88,17 @@ MEASURE = r"""
     }
     return true;
   };
+  // the JACK connection status indicator: its state must be legible from the
+  // DOM (data-jack-state) and it must carry a text or aria-label name, so the
+  // audit can tell "connected" from "error" without relying on colour alone
+  const jack = [];
+  document.querySelectorAll('.jack-status, [data-jack-state]').forEach(el => {
+    if (!visible(el)) return;
+    const state = el.getAttribute('data-jack-state') || '';
+    const label = (el.getAttribute('aria-label') || el.innerText || '').trim().replace(/\s+/g, ' ');
+    if (!state) jack.push({ el: name(el), text: text(el), issue: 'no data-jack-state attribute' });
+    else if (!label) jack.push({ el: name(el), text: text(el), issue: 'no text or aria-label for state ' + state });
+  });
   const name = el => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
     + (el.classList.length ? '.' + [...el.classList].join('.') : '');
   const text = el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 28);
@@ -146,7 +159,7 @@ MEASURE = r"""
     }
     spill.push({ el: name(el), right: Math.round(r.right), vw: vw });
   });
-  return { contrast, small, tight, pageScrolls, spill: spill.slice(0, 8) };
+  return { contrast, small, tight, pageScrolls, spill: spill.slice(0, 8), jack };
 }
 """.replace("%CONTROLS%", repr(CONTROLS))
 
@@ -302,7 +315,8 @@ def main():
                   for fg, cs in by_colour.items()] +
                  [("target", "%s %r %dx%d" % (s["el"][:40], s["text"], s["w"], s["h"])) for s in r["small"]] +
                  [("spacing", "%s | %s gap %dpx" % (t["a"][:34], t["b"][:34], t["gap"])) for t in r["tight"]] +
-                 [("overflow", "%s ends at %dpx of %d" % (s["el"][:40], s["right"], s["vw"])) for s in r["spill"]])
+                 [("overflow", "%s ends at %dpx of %d" % (s["el"][:40], s["right"], s["vw"])) for s in r["spill"]] +
+                 [("jack", "%s %r %s" % (j["el"][:40], j["text"], j["issue"])) for j in r.get("jack", [])])
         if r["pageScrolls"]:
             items.append(("overflow", "the page scrolls sideways"))
         seen, unique = set(), []

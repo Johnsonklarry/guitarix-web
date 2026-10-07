@@ -191,6 +191,31 @@
   // is connecting rather than showing an empty preset as though it were one.
   var haveSnapshot = false;
 
+  // How far ahead of the playhead the stream has buffered, in seconds, told to
+  // the server so it can see what listeners are actually experiencing. The
+  // audio element is the only thing that knows, so it is measured here.
+  var BUFFER_INTERVAL = 2000;
+
+  function bufferedAhead() {
+    if (!E.stream || typeof E.stream.buffered !== 'object' || !E.stream.buffered) return null;
+    var ranges = E.stream.buffered;
+    var now = E.stream.currentTime || 0;
+    for (var i = 0; i < ranges.length; i++) {
+      if (ranges.start(i) <= now && now <= ranges.end(i)) {
+        return Math.max(0, ranges.end(i) - now);
+      }
+    }
+    return 0;
+  }
+
+  function reportBuffer() {
+    var ahead = bufferedAhead();
+    if (ahead === null || !isFinite(ahead)) return;
+    socket.emit('playback_buffer', {seconds: ahead});
+  }
+
+  setInterval(reportBuffer, BUFFER_INTERVAL);
+
   function setLink(up) {
     if (E.pilot) E.pilot.classList.toggle('is-on', !!up);
     if (!E.status) return;
