@@ -135,22 +135,32 @@ def _import_application():
     return outcome.get("module")
 
 
-def _coordinator_class_from_source():
-    """Fallback: execute only the StateCoordinator class from ``app.py``.
+def _coordinator_definitions():
+    """Every top-level ``class StateCoordinator`` in ``app.py``.
 
-    Used when the module cannot be imported in the test environment. Only the
-    class definition of the module under test is executed; nothing else.
+    Two definitions with the same name mean the later one silently shadows
+    the earlier: the module-level name resolves to the last class, and
+    anything written against the first one's API breaks. The suite asserts
+    there is exactly one, and this is how it looks.
     """
     try:
         with open(_APP_PATH, "r", encoding="utf-8") as handle:
             source = handle.read()
         tree = ast.parse(source, filename=_APP_PATH)
     except (OSError, SyntaxError):        # pragma: no cover - defensive
-        return None
+        return []
+    return [node for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "StateCoordinator"]
 
-    wanted = [node for node in tree.body
-              if isinstance(node, ast.ClassDef)
-              and node.name == "StateCoordinator"]
+
+def _coordinator_class_from_source():
+    """Fallback: execute only the StateCoordinator class from ``app.py``.
+
+    Used when the module cannot be imported in the test environment. Only the
+    class definition of the module under test is executed; nothing else.
+    """
+    wanted = _coordinator_definitions()
     if not wanted:
         return None
 
@@ -291,11 +301,58 @@ class StateCoordinatorTestCase(unittest.TestCase):
         self.assertEqual({"worker-%d" % index for index in range(workers)},
                          set(states))
 
+    def _swap_coordinator(self):
+        """Install a fresh coordinator; put the original back afterwards.
+
+        The module-level coordinator is process-wide state, so every test
+        that writes to it restores the singleton rather than leaving a
+        generation count behind for whatever runs next.
+        """
+        original = getattr(self.app_module, "state_coordinator", None)
+        self.assertIsInstance(original, self.coordinator_cls)
+        fresh = self.coordinator_cls()
+        self.app_module.state_coordinator = fresh
+        self.addCleanup(setattr, self.app_module, "state_coordinator", original)
+        return fresh
+
+    def test_app_defines_exactly_one_state_coordinator(self):
+        definitions = _coordinator_definitions()
+        self.assertEqual(
+            1, len(definitions),
+            "app.py defines StateCoordinator %d times; the later definition "
+            "shadows the earlier one and silently drops the first one's API"
+            % len(definitions))
+
+    def test_state_changes_reach_the_coordinator(self):
+        """The app must feed the coordinator, not merely declare it.
+
+        A generation counter that nothing ever bumps stays at zero, which is
+        the whole point of it. This drives two of the app's own state-push
+        paths -- a connection change and a preset change -- and checks that
+        each one lands in the coordinator.
+        """
+        if self.app_module is None:       # pragma: no cover - defensive
+            self.skipTest("app.py could not be imported for this test")
+        coordinator = self._swap_coordinator()
+
+        self.app_module.on_status(True)
+        self.assertEqual(1, coordinator.get_generation())
+        self.assertEqual({"connected": True}, coordinator.get_state("status"))
+
+        self.app_module.on_params({"system.current_bank": "Bank",
+                                   "system.current_preset": "Preset"})
+        self.assertEqual(2, coordinator.get_generation())
+        self.assertEqual({"bank": "Bank", "preset": "Preset"},
+                         coordinator.get_state("preset"))
+
     def test_app_entry_point_exposes_state_coordinator(self):
         if self.app_module is None:       # pragma: no cover - defensive
             self.skipTest("app.py could not be imported for this test")
-        coordinator = getattr(self.app_module, "state_coordinator", None)
-        self.assertIsInstance(coordinator, self.coordinator_cls)
+        original = getattr(self.app_module, "state_coordinator", None)
+        self.assertIsInstance(original, self.coordinator_cls)
+        # a fresh instance, so the process-wide singleton's generation is
+        # left exactly as it was found
+        coordinator = self._swap_coordinator()
         initial = coordinator.get_generation()
         self.assertIsInstance(initial, int)
         coordinator.update("test-subsystem-19301", {"ok": True})

@@ -266,59 +266,6 @@ socketio.start_background_task = _start_task_for_requester
 
 
 class StateCoordinator:
-    """Thread-safe coordinator tracking subsystem states with monotonic generation numbering."""
-
-    def __init__(self, state_obj=None):
-        self.lock = threading.Lock()
-        self._lock = self.lock
-        self.state = state_obj
-        self.generation = 0
-        self._states = {}
-
-    @property
-    def _generation(self):
-        return self.generation
-
-    @_generation.setter
-    def _generation(self, value):
-        self.generation = value
-
-    def update_subsystem(self, name, state):
-        with self.lock:
-            self._states[name] = state
-            self.generation += 1
-            return self.generation
-
-    def next_generation(self):
-        with self.lock:
-            self.generation += 1
-            return self.generation
-
-    def get_generation(self):
-        with self.lock:
-            return self.generation
-
-    def snapshot(self):
-        with self.lock:
-            if self.state is not None:
-                snap = self.state.snapshot()
-                snap["generation"] = self.generation
-                return snap
-            return {
-                "generation": self.generation,
-                "states": dict(self._states),
-            }
-
-    def publish(self, event, payload=None):
-        gen = self.next_generation()
-        if isinstance(payload, dict):
-            payload = dict(payload)
-            payload["generation"] = gen
-        socketio.emit(event, payload)
-        return gen
-
-
-class StateCoordinator:
     """Thread-safe registry for the state of every subsystem we track.
 
     Each accepted update stores the new state and bumps a *monotonic*
@@ -496,8 +443,10 @@ def read_rec_feed(path=None, now=None):
 
 def push_recordings():
     publish_rec_feed()
-    socketio.emit("recordings", {"rec": rec_payload(), "items": rec.listing(),
-                                 "backing_items": backing.listing()})
+    payload = {"rec": rec_payload(), "items": rec.listing(),
+               "backing_items": backing.listing()}
+    state_coordinator.update("recordings", payload)
+    socketio.emit("recordings", payload)
 
 
 rec = Recorder(on_change=push_recordings)
@@ -648,6 +597,7 @@ def set_dirty(value):
         changed = state.dirty != value
         state.dirty = value
     if changed:
+        state_coordinator.update("dirty", {"dirty": value})
         socketio.emit("dirty", {"dirty": value})
 
 
@@ -692,6 +642,7 @@ def flusher():
             _pending.clear()
         with state.lock:
             state.values.update(batch)
+        state_coordinator.update("params", batch)
         socketio.emit("params", batch)
 
 
@@ -705,6 +656,7 @@ def on_params(changes):
             state.bank = changes.get("system.current_bank", state.bank)
             state.preset = changes.get("system.current_preset", state.preset)
             payload = {"bank": state.bank, "preset": state.preset}
+        state_coordinator.update("preset", payload)
         socketio.emit("preset", payload)
     queue_params(changes)
 
@@ -738,6 +690,7 @@ def _refresh_after_event():
 def on_status(connected):
     with state.lock:
         state.connected = connected
+    state_coordinator.update("status", {"connected": connected})
     socketio.emit("status", {"connected": connected})
     log.info("guitarix %s", "connected" if connected else "disconnected")
 
@@ -763,7 +716,9 @@ def on_ready():
 
     log.info("loaded %d parameters, %d eq groups, %d fx groups, %d banks",
              len(parameters), len(eq), len(fx), len(banks))
-    socketio.emit("snapshot", state.snapshot())
+    snapshot = state.snapshot()
+    state_coordinator.update("snapshot", snapshot)
+    socketio.emit("snapshot", snapshot)
 
 
 def refresh_preset():
