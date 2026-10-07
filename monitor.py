@@ -177,7 +177,17 @@ class Monitor:
 
     def status(self):
         return {"listeners": len(self._listeners),
-                "running": self._proc is not None and self._proc.poll() is None}
+                "running": self._proc is not None and self._proc.poll() is None,
+                "xruns": self.xruns,
+                "latency": self.latency}
+
+    def __init__(self, sources):
+        self.sources = sources                    # () -> [[port, ...], ...]
+        self._listeners = set()
+        self._proc = None
+        self._lock = threading.Lock()
+        self.xruns = 0
+        self.latency = {"roundtrip_ms": 0, "sample_rate": 48000, "period_ms": 0}
 
     def pcm(self):
         """

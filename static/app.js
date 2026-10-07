@@ -193,6 +193,12 @@ function renderReadout() {
   } else {
     html = 'Pick a sound to start';
   }
+  if (state.monitor && state.monitor.xruns > 0) {
+    html += ' <span class="readout__tag">xruns: ' + state.monitor.xruns + '</span>';
+  }
+  if (state.monitor && state.monitor.latency && state.monitor.latency.roundtrip_ms > 0) {
+    html += ' <span class="readout__tag">' + state.monitor.latency.roundtrip_ms.toFixed(1) + 'ms</span>';
+  }
   if (els.readout.innerHTML !== html) {
     els.readout.innerHTML = html;
     flash(els.readout, 'is-changed');
