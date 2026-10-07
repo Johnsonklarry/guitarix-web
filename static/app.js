@@ -53,7 +53,7 @@ let organising = false;
 let picked = null;           // { bank, name } chosen while organising
 let can = {};
 
-let state = { banks: [], bank: null, preset: null, values: {} };
+let state = { banks: [], bank: null, preset: null, values: {}, version: 0 };
 let online = false;          // engine reachable? read during the first render,
                              // so it has to be declared before applyLayout runs
 let linked = false;          // browser <-> web app socket up?
@@ -2578,7 +2578,12 @@ function when(epoch) {
 
 /* ------------------------------------------------------------------ socket */
 
-socket.on('connect', function () { setLinked(true); });
+socket.on('connect', function () {
+  setLinked(true);
+  // A reconnect may have missed deltas while the socket was down, so tell the
+  // server where we left off and let it decide between a delta and a snapshot.
+  socket.emit('resync', { version: state.version || 0 });
+});
 socket.on('disconnect', function () { setLinked(false); });
 
 socket.on('status', function (msg) {
@@ -2594,6 +2599,7 @@ socket.on('snapshot', function (snap) {
   // A copy, not the message itself: adopting it means anything else holding
   // the same object sees every later change to the page's state.
   state = Object.assign({}, snap);
+  state.version = snap.version || 0;
   setStatus(snap.connected);
   if (!selectedBank || !snap.banks.some(function (b) { return b.name === selectedBank; })) {
     selectedBank = snap.bank || (snap.banks[0] && snap.banks[0].name) || null;
@@ -2617,6 +2623,19 @@ socket.on('snapshot', function (snap) {
 socket.on('preset', function (msg) { setPreset(msg.bank, msg.preset); });
 
 socket.on('params', function (changes) { applyValues(changes, true); });
+
+/* Deltas arrive in order and carry the version they produce. If one is
+   missing -- a dropped frame, a reconnect -- the versions stop lining up and
+   the only safe move is to ask for the whole picture again. */
+socket.on('delta', function (msg) {
+  const expected = (state.version || 0) + 1;
+  if (msg.version !== expected) {
+    socket.emit('resync', { version: state.version || 0 });
+    return;
+  }
+  applyValues(msg.changes || {}, true);
+  state.version = msg.version;
+});
 
 socket.on('banks', function (msg) {
   state.banks = (msg.banks || []).slice();
