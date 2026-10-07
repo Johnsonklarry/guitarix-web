@@ -187,11 +187,13 @@ class Reamp:
         finally:
             with self._lock:
                 self._session = None
+        # Clear first, then set only if something failed: a clean reconnect
+        # sequence must leave restore_error as None so the UI stops showing
+        # a stale error from an earlier session.
+        self.restore_error = None
         if failed:
             self.restore_error = "couldn't reconnect: " + ", ".join(failed)
             log.error("reamp of %s: %s", s["take"], self.restore_error)
-        else:
-            self.restore_error = None
         if reason and reason.startswith("failed"):
             log.warning("reamp of %s ended: %s", s["take"], reason)
         self.on_change()
