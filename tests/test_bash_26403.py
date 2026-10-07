@@ -48,9 +48,10 @@ class ReportTest(unittest.TestCase):
 
     def test_report_covers_all_three_budgets(self):
         report = diagnose.build_report(self.sample_records())
-        self.assertIn("guitar path", report)
-        self.assertIn("backing/reamp", report)
-        self.assertIn("browser listening", report)
+        # The whole section heading, not a substring a measurement line could
+        # contain by accident.
+        for title in diagnose.BUDGET_TITLES.values():
+            self.assertIn("### " + title, report)
 
     def test_report_shows_measurements_and_budgets(self):
         report = diagnose.build_report(self.sample_records())
@@ -72,9 +73,12 @@ class ReportTest(unittest.TestCase):
         self.assertIn("Rollback instructions", report)
         self.assertIn("128 frames", report)
         self.assertIn("2.67 ms", report)
-        # the over-budget budget is named in the rollback note
-        self.assertIn("Over budget:", report)
-        self.assertIn("backing/reamp", report.split("Rollback instructions")[1])
+        # the over-budget budget is named in the rollback note, by its full
+        # title and with the numbers it went over by
+        rollback = report.split("Rollback instructions")[1]
+        self.assertIn("Over budget:", rollback)
+        self.assertIn("backing/reamp (command to sound) is 24.00 ms "
+                      "against a 20.00 ms budget", rollback)
 
     def test_unmeasured_budgets_still_get_a_section(self):
         report = diagnose.build_report({"guitar": 8.0})
@@ -98,6 +102,41 @@ class ReportTest(unittest.TestCase):
         second = diagnose.build_report(self.sample_records())
         self.assertEqual(first, second)
         self.assertTrue(first.endswith("\n"))
+
+    def test_a_malformed_xrun_count_cannot_take_down_the_report(self):
+        report = diagnose.build_report({
+            "guitar": {"measured_ms": 8.0, "xruns": "n/a"},
+            "backing/reamp": {"measured_ms": 9.0, "xruns": None},
+            "browser/listening": {"measured_ms": 10.0, "xruns": "3"},
+        })
+        self.assertIn("Total xruns: 3", report)
+        self.assertIn("xruns: 0", report)
+
+    def test_a_second_record_for_one_budget_is_kept_not_dropped(self):
+        report = diagnose.build_report([
+            {"name": "guitar", "measured_ms": 8.0},
+            {"name": "guitar path", "measured_ms": 9.0},
+        ])
+        # the first record holds the section ...
+        self.assertIn("measured 8.00 ms", report.split("## Other measurements")[0])
+        # ... and the second is printed rather than swallowed
+        other = report.split("## Other measurements")[1]
+        self.assertIn("measured 9.00 ms", other)
+        self.assertIn("guitar path (second guitar record)", other)
+
+    def test_a_name_that_only_contains_a_budget_name_is_left_alone(self):
+        report = diagnose.build_report([{"name": "backingtrack latency",
+                                         "measured_ms": 3.0}])
+        self.assertIn("## Other measurements", report)
+        self.assertIn("backingtrack latency",
+                      report.split("## Other measurements")[1])
+
+    def test_xruns_from_other_measurements_count_towards_the_total(self):
+        report = diagnose.build_report([
+            {"name": "guitar", "measured_ms": 8.0, "xruns": 1},
+            {"name": "usb interface", "measured_ms": 2.0, "xruns": 4},
+        ])
+        self.assertIn("Total xruns: 5", report)
 
 
 class MpvFlagSchemaTest(unittest.TestCase):

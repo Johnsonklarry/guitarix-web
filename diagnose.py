@@ -287,17 +287,33 @@ def period_ms(frames, sample_rate=SAMPLE_RATE):
 PERIOD_MS = {frames: period_ms(frames) for frames in (16, 32, 64, 128, 256, 512, 1024)}
 
 
-def _budget_key(name):
-    """Which of the three budgets a record belongs to, or None if it isn't one."""
+def _normalise_name(name):
+    """A record name flattened to lowercase words: "backing/reamp" -> "backing reamp"."""
     key = str(name).lower()
     for ch in "/_-":
         key = key.replace(ch, " ")
-    key = " ".join(key.split())
+    return " ".join(key.split())
+
+
+def _budget_key(name):
+    """Which of the three budgets a record belongs to, or None if it isn't one.
+
+    An exact match wins. Failing that an alias has to turn up as whole words:
+    "backing track" and "backing/reamp" still land in the reamp section, but a
+    name that merely contains one -- "backingtrack", "guitarists" -- is left
+    for Other measurements instead of being quietly claimed. When more than one
+    alias fits, the longest one decides, so the answer never depends on the
+    order of BUDGET_ALIASES.
+    """
+    key = _normalise_name(name)
     if key in BUDGET_ALIASES:
         return BUDGET_ALIASES[key]
-    for alias, canonical in BUDGET_ALIASES.items():
-        if alias in key:
-            return canonical
+    words = key.split()
+    for alias in sorted(BUDGET_ALIASES, key=len, reverse=True):
+        span = alias.split()
+        if any(words[i:i + len(span)] == span
+               for i in range(len(words) - len(span) + 1)):
+            return BUDGET_ALIASES[alias]
     return None
 
 
@@ -308,6 +324,22 @@ def _number_or_none(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_int(value, default=0):
+    """An integer out of whatever a record supplied.
+
+    A malformed xrun count ("n/a", a list, inf) is 0, not a crash: this is a
+    diagnostic, and the count it couldn't read is one of the things it exists
+    to show. _number_or_none refuses bools, so True doesn't turn into 1.
+    """
+    number = _number_or_none(value)
+    if number is None:
+        return default
+    try:
+        return int(number)
+    except (OverflowError, ValueError):
+        return default
 
 
 def _iter_records(records):
@@ -335,7 +367,8 @@ def _record_parts(value):
         budget = value.get("budget_ms", value.get("budget", value.get("limit_ms")))
         xruns = value.get("xruns", value.get("xruns_count", 0)) or 0
         detail = value.get("detail", value.get("note", "")) or ""
-        return _number_or_none(measured), _number_or_none(budget), int(xruns), str(detail)
+        return (_number_or_none(measured), _number_or_none(budget),
+                _as_int(xruns), str(detail))
     number = _number_or_none(value)
     if number is not None:
         return number, None, 0, ""
@@ -376,22 +409,31 @@ def build_report(records=None, xruns=None, sample_rate=SAMPLE_RATE, frames=PERIO
 
     Every budget gets a section whether or not it was measured, so the report
     has the same shape every time and a measurement that is missing says so
-    rather than quietly disappearing.
+    rather than quietly disappearing. If two records land on the same budget
+    the first one keeps the section and the second is printed under Other
+    measurements, so nothing is dropped on the floor.
 
-    `xruns` sets the total; leave it out and the per-budget counts are added
-    up. The result is markdown, with no timestamps in it: the same
-    measurements always produce the same report.
+    `xruns` sets the total; leave it out and the counts from every record --
+    including the ones under Other measurements -- are added up. The result is
+    markdown, with no timestamps in it: the same measurements always produce
+    the same report.
     """
     if budgets:
         records = dict(records or {}, **budgets)
 
     collected, other = {}, []
     for name, value in _iter_records(records):
+        label = str(name) or "unnamed"
         key = _budget_key(name)
-        if key is None:
-            other.append((str(name) or "unnamed", _record_parts(value)))
-        elif key not in collected:
+        if key is not None and key not in collected:
             collected[key] = _record_parts(value)
+        else:
+            # Not a budget at all, or a second record for a budget that already
+            # has one: the first record keeps the section, and this one is
+            # printed rather than discarded without a word.
+            if key is not None:
+                label = "%s (second %s record)" % (label, key)
+            other.append((label, _record_parts(value)))
 
     per_period = period_ms(frames, sample_rate)
     lines = [
@@ -404,6 +446,9 @@ def build_report(records=None, xruns=None, sample_rate=SAMPLE_RATE, frames=PERIO
     ]
 
     counted, over = 0, []
+    # Records under Other measurements carry xruns too, and the total is the
+    # total of the run, so they count as well.
+    counted += sum(parts[2] for _, parts in other)
     for key in BUDGETS:
         measured, budget, xrun_count, detail = collected.get(key, (None, None, 0, ""))
         counted += xrun_count
@@ -423,7 +468,7 @@ def build_report(records=None, xruns=None, sample_rate=SAMPLE_RATE, frames=PERIO
     lines.append("")
     lines.append("## Xruns")
     lines.append("")
-    lines.append("Total xruns: %d" % (counted if xruns is None else int(xruns)))
+    lines.append("Total xruns: %d" % (counted if xruns is None else _as_int(xruns)))
     lines.append("")
     lines.append("Xrun counts by budget:")
     for key in BUDGETS:
