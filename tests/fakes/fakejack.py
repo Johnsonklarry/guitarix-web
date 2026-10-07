@@ -1,6 +1,71 @@
 import json
 import os
 import tempfile
+import time
+
+# Every dropped connect()/disconnect() call appends (op, src, dst) here so a
+# test can assert exactly which faults were injected, independently of the
+# graph state the drops deliberately left untouched.
+injected_failures = []
+
+
+def _faults():
+    """
+    Optional fault list at FAKE_JACK_DIR/faults.json: a JSON list of objects
+    with "op" ("connect" or "disconnect"), "src", "dst" and "result"
+    ("drop" or "delay"). Absent file means no faults, i.e. unchanged
+    behaviour. A malformed file is a test bug, so fail loudly rather than
+    silently running a fault-free rig.
+    """
+    path = os.path.join(_dir(), 'faults.json')
+    if not os.path.exists(path):
+        return []
+    with open(path, 'r') as f:
+        try:
+            faults = json.load(f)
+        except ValueError as e:
+            raise SystemExit("%s is not valid JSON (%s); delete it to run "
+                             "without injected faults." % (path, e))
+    if not isinstance(faults, list):
+        raise SystemExit("%s is malformed: expected a list of fault objects; "
+                         "delete it to run without injected faults." % path)
+    return faults
+
+
+def _fault(op, src, dst):
+    """
+    The fault entry matching this call, or None. Matching is on the pair in
+    either order, because callers may name the ends either way round and a
+    fault that only fires for one spelling is a trap.
+    """
+    for entry in _faults():
+        if not isinstance(entry, dict) or entry.get('op') != op:
+            continue
+        a, b = entry.get('src'), entry.get('dst')
+        if (a == src and b == dst) or (a == dst and b == src):
+            return entry
+    return None
+
+
+def _apply_fault(op, src, dst):
+    """
+    Consult the fault list for this call. Return True when the call must be
+    dropped (caller returns False without touching the graph); a "delay"
+    entry sleeps 0.2s and returns False so the call proceeds normally.
+    """
+    entry = _fault(op, src, dst)
+    if entry is None:
+        return False
+    if entry.get('result') == 'drop':
+        injected_failures.append((op, src, dst))
+        return True
+    if entry.get('result') == 'delay':
+        time.sleep(0.2)
+        return False
+    raise SystemExit("%s has a fault with result %r: expected 'drop' or "
+                     "'delay'." % (os.path.join(_dir(), 'faults.json'),
+                                   entry.get('result')))
+
 
 FAULTS_KEY = 'faults'
 FAULT_LOG_KEY = 'fault_log'
@@ -177,6 +242,9 @@ def _edge(state, a, b):
 
 def connect(src, dst):
     """Connect two ports. Return True on success."""
+    if _apply_fault('connect', src, dst):
+        return False
+
     state = load()
 
     if _trigger_fault(state, 'drop_connect', '%s -> %s' % (src, dst)):
@@ -203,6 +271,9 @@ def connect(src, dst):
 
 def disconnect(src, dst):
     """Disconnect two ports. Return True on success."""
+    if _apply_fault('disconnect', src, dst):
+        return False
+
     state = load()
 
     if _trigger_fault(state, 'drop_disconnect', '%s -> %s' % (src, dst)):

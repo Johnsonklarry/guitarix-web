@@ -24,40 +24,57 @@ import threading
 import gx_rpc
 from gx_rpc import GuitarixRPC
 
-ready = threading.Event()
-rpc = GuitarixRPC(on_ready=ready.set)
-rpc.start()
+UNKNOWN_METHOD = -32601
 
-if not ready.wait(timeout=10):
-    sys.exit("could not reach guitarix on 127.0.0.1:7000 "
-             "(is it running with -p 7000 ?)")
 
-print("probing %s:%s\n" % (rpc.host, rpc.port))
+def classify(response):
+    """Return "unknown" for a JSON-RPC -32601 reply, "real" for anything else."""
+    error = response.get("error") if isinstance(response, dict) else None
+    if isinstance(error, dict) and error.get("code") == UNKNOWN_METHOD:
+        return "unknown"
+    return "real"
 
-found = {}
-for action, names in gx_rpc.CANDIDATES.items():
-    hit = None
-    for name in names:
-        state = rpc.probe(name)
-        print("  %-22s %s" % (name, state))
-        if state != "missing" and hit is None:
-            hit = name
-    found[action] = hit
-    print("%-14s -> %s\n" % (action, hit or "NOTHING FOUND"))
 
-print("Put this in gx_rpc.py:\n")
-print("PRESET_METHODS = {")
-for action, name in found.items():
-    print('    %-16s %s,' % ('"%s":' % action, '"%s"' % name if name else "None"))
-print("}")
+def main():
+    ready = threading.Event()
+    rpc = GuitarixRPC(on_ready=ready.set)
+    rpc.start()
 
-missing = [a for a, n in found.items() if not n]
-if missing:
-    print("\nNo candidate matched for: %s" % ", ".join(missing))
-    print("save_current is the least important one: with save_as present, the")
-    print("Save button overwrites the loaded preset by name instead.")
-    print("Run  grep -rn 'method_name' src/gx_head/engine/jsonrpc_methods.gperf_tmpl")
-    print("in a guitarix source checkout to see the real list, and add the")
-    print("names to CANDIDATES in gx_rpc.py.")
+    if not ready.wait(timeout=10):
+        sys.exit("could not reach guitarix on 127.0.0.1:7000 "
+                 "(is it running with -p 7000 ?)")
 
-rpc.stop()
+    print("probing %s:%s\n" % (rpc.host, rpc.port))
+
+    found = {}
+    for action, names in gx_rpc.CANDIDATES.items():
+        hit = None
+        for name in names:
+            response = rpc.call(name)
+            state = classify(response)
+            print("  %-22s %s" % (name, state))
+            if state != "unknown" and hit is None:
+                hit = name
+        found[action] = hit
+        print("%-14s -> %s\n" % (action, hit or "NOTHING FOUND"))
+
+    print("Put this in gx_rpc.py:\n")
+    print("PRESET_METHODS = {")
+    for action, name in found.items():
+        print('    %-16s %s,' % ('"%s":' % action, '"%s"' % name if name else "None"))
+    print("}")
+
+    missing = [a for a, n in found.items() if not n]
+    if missing:
+        print("\nNo candidate matched for: %s" % ", ".join(missing))
+        print("save_current is the least important one: with save_as present, the")
+        print("Save button overwrites the loaded preset by name instead.")
+        print("Run  grep -rn 'method_name' src/gx_head/engine/jsonrpc_methods.gperf_tmpl")
+        print("in a guitarix source checkout to see the real list, and add the")
+        print("names to CANDIDATES in gx_rpc.py.")
+
+    rpc.stop()
+
+
+if __name__ == "__main__":
+    main()

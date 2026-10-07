@@ -433,9 +433,81 @@ def _export_request_cancel():
         return True
 
 
-def done(op, ok):
+# Finished operations land here so a duplicate request -- one carrying the same
+# durable operation id -- replays the original result instead of doing the work
+# twice. The journal is bounded in size and in age: a retry that arrives after
+# the TTL is treated as a brand new request.
+DONE_JOURNAL_MAX = 1024
+DONE_JOURNAL_TTL = 24 * 60 * 60
+_done_journal = {}
+_done_journal_lock = threading.Lock()
+
+
+def _journal_get(op_id):
+    """Caller holds _done_journal_lock. The cached (op, ok), or None."""
+    entry = _done_journal.get(op_id)
+    if entry is None:
+        return None
+    cached_op, cached_ok, recorded = entry
+    if DONE_JOURNAL_TTL and time.time() - recorded > DONE_JOURNAL_TTL:
+        del _done_journal[op_id]
+        return None
+    return cached_op, cached_ok
+
+
+def _journal_put(op_id, op, ok):
+    """Caller holds _done_journal_lock. Store the result, then drop the oldest
+    entries until the journal is back inside its bound."""
+    _done_journal[op_id] = (op, bool(ok), time.time())
+    while DONE_JOURNAL_MAX and len(_done_journal) > DONE_JOURNAL_MAX:
+        _done_journal.pop(next(iter(_done_journal)))
+
+
+def done_journal_lookup(op_id):
+    """The cached (op, ok) recorded for `op_id`, or None if unknown or expired."""
+    if not op_id:
+        return None
+    with _done_journal_lock:
+        return _journal_get(op_id)
+
+
+def done_journal_record(op_id, op, ok):
+    """Remember `op_id`, dropping the oldest entries once the bound is exceeded."""
+    with _done_journal_lock:
+        _journal_put(op_id, op, ok)
+
+
+def done_journal_claim(op_id, op, ok):
+    """
+    Look `op_id` up and, when it is not already known, record `op`/`ok` for it
+    -- both under one lock acquisition, so two calls racing on the same id
+    cannot both miss and both record.
+
+    Returns the recorded (op, ok) when the id already belongs to that
+    operation (a duplicate request: replay it), or None when this call was the
+    first for the id and has now recorded it. An id journaled for a DIFFERENT
+    operation is not a retry of this one, so it is reported -- and recorded --
+    in its own right rather than answered with the other operation's result.
+    """
+    if not op_id:
+        return None
+    with _done_journal_lock:
+        cached = _journal_get(op_id)
+        if cached is not None and cached[0] == op:
+            return cached
+        _journal_put(op_id, op, ok)
+        return None
+
+
+def done(op, ok, op_id=None):
     """Tell the browser that started `op` it has finished, so its button settles."""
     if op:
+        # One atomic lookup-or-record: a duplicate is replayed from the
+        # journal, a first (or a reused id belonging to another operation) is
+        # reported and recorded as itself.
+        cached = done_journal_claim(op_id, op, ok)
+        if cached is not None:        # duplicate request: replay what we sent
+            op, ok = cached
         payload = {"op": op, "ok": bool(ok)}
         sid = _requester()
         if sid:
@@ -702,13 +774,42 @@ def api_state():
     return jsonify(state.snapshot())
 
 
+def _confined(root, name, must_exist=True):
+    """
+    The one place where a name from a URL or an upload becomes a path.
+
+    Returns the absolute path of `root` joined with the name's final
+    component, or None when the name can't be trusted with that. A name
+    carrying a ".." path component is refused outright; any other directory
+    part is dropped, so the result is always one plain file name inside
+    `root` -- it is never the name that decides where in the filesystem it
+    lands. Whole components are compared, never substrings, so "..take.wav"
+    is an ordinary file name. The directory part is dropped rather than
+    refused because some browsers send an upload's filename as a full client
+    path, and only its last component is of any use.
+    Uploads pass must_exist=False: they name the file they are about to
+    write, which is not there yet.
+    """
+    root = os.path.abspath(root)
+    name = (name or "").replace("\\", "/")
+    # whole segments only, so "..take.wav" stays an ordinary file name
+    if not name or ".." in name.split("/"):
+        return None
+    path = os.path.abspath(os.path.join(root, os.path.basename(name)))
+    if os.path.dirname(path) != root:
+        return None
+    if must_exist and not os.path.isfile(path):
+        return None
+    return path
+
+
 @app.route("/recordings/<path:name>")
 def recording_file(name):
     """Serves a take for the <audio> element, or as a download with ?dl=1."""
-    safe = os.path.basename(name)
-    if not os.path.isfile(os.path.join(rec.dir, safe)):
+    path = _confined(rec.dir, name)
+    if path is None:
         abort(404)
-    return send_from_directory(rec.dir, safe,
+    return send_from_directory(os.path.dirname(path), os.path.basename(path),
                                as_attachment=bool(request.args.get("dl")),
                                conditional=True)
 
@@ -750,7 +851,13 @@ def backing_upload():
     saved = []
     try:
         for f in files:
-            saved.append(backing.save_upload(f.filename, f.stream))
+            safe = _confined(backing.dir, f.filename, must_exist=False)
+            if safe is None:
+                return jsonify({"ok": False, "error": "That file name leaves the backing folder.",
+                                "saved": saved}), 400
+            # hand the library the name that was checked, not the raw one from
+            # the client, so the guard and the write can't drift apart
+            saved.append(backing.save_upload(os.path.basename(safe), f.stream))
     except (BackingError, OSError) as exc:
         return jsonify({"ok": False, "error": str(exc), "saved": saved}), 400
     return jsonify({"ok": True, "saved": saved})
@@ -758,10 +865,11 @@ def backing_upload():
 
 @app.route("/backing/<path:name>")
 def backing_file(name):
-    safe = os.path.basename(name)
-    if not os.path.isfile(os.path.join(backing.dir, safe)):
+    path = _confined(backing.dir, name)
+    if path is None:
         abort(404)
-    return send_from_directory(backing.dir, safe, conditional=True)
+    return send_from_directory(os.path.dirname(path), os.path.basename(path),
+                               conditional=True)
 
 
 @app.route("/api/parameters")
@@ -907,6 +1015,43 @@ def _banks_map():
     return {b.get("name"): list(b.get("presets", [])) for b in rpc.banks()}
 
 
+def _preset_transaction(fn, verify, settle=3.0):
+    """
+    Run one preset mutation and report what the engine actually did.
+
+    The preset methods are notify-only: guitarix acts on them and sends
+    nothing back, so there's no reply to check. Instead the bank list is
+    read before and after, and the change is polled for until `settle`
+    seconds elapse.
+
+    Returns {"before", "after", "ok", "ambiguous"}:
+
+      ok         the verify predicate saw the change within the timeout
+      ambiguous  the poll failed AND the bank list is byte-for-byte what it
+                 was before the notify, so the engine never acted on it.
+                 That is the signature of a wrong method name, and it is
+                 reported differently from a change that landed but did not
+                 look the way the caller expected.
+    """
+    before = _banks_map()
+    fn()
+
+    ok = False
+    deadline = time.time() + settle
+    while time.time() < deadline:
+        socketio.sleep(0.25)
+        try:
+            if verify(_banks_map()):
+                ok = True
+                break
+        except (RpcError, OSError, TimeoutError):
+            continue
+
+    after = _banks_map()
+    return {"before": before, "after": after, "ok": ok,
+            "ambiguous": (not ok) and before == after}
+
+
 def _preset_action(fn, ok_message, verify=None, settle=3.0, fail_message=None,
                    op=None, after=None):
     """
@@ -919,7 +1064,11 @@ def _preset_action(fn, ok_message, verify=None, settle=3.0, fail_message=None,
     """
     def run():
         try:
-            fn()
+            if verify is None:
+                fn()
+                result = {"ok": True, "ambiguous": False}
+            else:
+                result = _preset_transaction(fn, verify, settle)
         except RpcMethodMissing as exc:
             toast("No %r method is configured. Run probe_rpc.py." % str(exc), "error")
             done(op, False)
@@ -929,19 +1078,7 @@ def _preset_action(fn, ok_message, verify=None, settle=3.0, fail_message=None,
             done(op, False)
             return
 
-        ok = True
-        if verify is not None:
-            ok = False
-            deadline = time.time() + settle
-            while time.time() < deadline:
-                socketio.sleep(0.25)
-                try:
-                    if verify(_banks_map()):
-                        ok = True
-                        break
-                except (RpcError, OSError, TimeoutError):
-                    continue
-
+        ok = result["ok"]
         if ok and after:
             try:
                 after()
@@ -950,6 +1087,10 @@ def _preset_action(fn, ok_message, verify=None, settle=3.0, fail_message=None,
         refresh_banks()
         if ok:
             toast(ok_message, "ok")
+        elif result["ambiguous"]:
+            toast("The engine didn't act on that preset change, so the "
+                  "outcome is ambiguous. Check the method name in "
+                  "PRESET_METHODS.", "error")
         else:
             toast(fail_message or
                   "The engine didn't change anything. Check the method name "

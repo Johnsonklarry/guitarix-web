@@ -36,11 +36,30 @@ import os
 import shutil
 import struct
 import subprocess
+import re
 import sys
 import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+def parse_jack_iodelay(output):
+    """The roundtrip figure from jack_iodelay output, or None if there isn't one.
+
+    None means the roundtrip line wasn't there. A parse that found nothing is
+    not a 0 ms measurement, and handing one over would put a fabricated number
+    in front of whoever is deciding whether to roll the rig back -- so a
+    failure says so rather than looking like the best result in the report.
+
+    Only what the output actually carried goes in the record. jack_iodelay
+    reports neither a period size nor an xrun count, so filling in 0.0 and 0
+    for them would look like measurements and could quietly stand in for the
+    real ones.
+    """
+    match = re.search(r"([\d.]+)\s+ms\s+total\s+roundtrip\s+latency", output or "")
+    if not match:
+        return None
+    return {"roundtrip_ms": float(match.group(1))}
 
 try:
     from flask import Flask, Response

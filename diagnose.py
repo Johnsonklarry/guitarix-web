@@ -225,6 +225,19 @@ def check_storage(r):
               "" if gb > 2 else "getting tight; delete some takes")
 
 
+def get_period_ms(frames, rate):
+    """Legacy name for period_ms: the same number, with the same validation.
+
+    period_ms is the real implementation -- it rejects a zero or negative
+    sample rate with a ValueError instead of a ZeroDivisionError, and it is
+    what the report is built from -- so this defers to it rather than
+    computing the same value a second way and drifting out of step. The name
+    is resolved when this is called, so period_ms being defined further down
+    the module is fine.
+    """
+    return period_ms(frames, rate)
+
+
 def check_serving(r):
     here = os.path.dirname(os.path.abspath(__file__))
     vendored = os.path.exists(os.path.join(here, "static", "socket.io.min.js"))
