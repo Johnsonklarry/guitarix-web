@@ -54,6 +54,8 @@ let picked = null;           // { bank, name } chosen while organising
 let can = {};
 
 let state = { banks: [], bank: null, preset: null, values: {} };
+let stateVersion = 0;        // version of the state the page is showing
+let resyncing = false;       // a snapshot has been asked for and hasn't landed
 let online = false;          // engine reachable? read during the first render,
                              // so it has to be declared before applyLayout runs
 let linked = false;          // browser <-> web app socket up?
@@ -787,7 +789,57 @@ function buildDiscrete(ctrl) {
   return sw;
 }
 
+/* ----------------------------------------------------------------- deltas */
+
+/* The engine numbers every batch of changes it pushes. The batch that lands
+   has to be the one right after the version the page is holding: one that
+   steps further means an update went missing on the way here, and a gap can't
+   be patched out of the messages that survived it -- so ask for the whole
+   state instead of applying something that would be half right. */
+function splitDelta(msg) {
+  if (!msg) return { version: null, values: {} };
+  // A delta arrives either as its parameters with a version beside them, or
+  // as a { version, values } envelope. Take both shapes.
+  if (msg.values && typeof msg.version === 'number') {
+    return { version: msg.version, values: msg.values };
+  }
+  const values = {};
+  let version = null;
+  Object.keys(msg).forEach(function (id) {
+    if (id === 'version') { version = Number(msg[id]); return; }
+    values[id] = msg[id];
+  });
+  return { version: version, values: values };
+}
+
+/* The values worth applying, or null when the delta is one we have already
+   seen or lands beyond a hole we can't fill ourselves. */
+function acceptDelta(msg) {
+  const delta = splitDelta(msg);
+  if (delta.version === null) return delta.values;   // unnumbered: take it as it comes
+  if (delta.version <= stateVersion) return null;    // already seen, nothing to do
+  if (delta.version !== stateVersion + 1) {
+    requestSnapshot('missed ' + (delta.version - stateVersion - 1)
+                    + ' update(s) before v' + delta.version);
+    return null;
+  }
+  stateVersion = delta.version;
+  return delta.values;
+}
+
+/* One request at a time: the engine will hand over several more deltas before
+   the snapshot lands, and every one of them looks like another gap. */
+function requestSnapshot(reason) {
+  if (resyncing) return;
+  resyncing = true;
+  socket.emit('request_snapshot', { version: stateVersion, reason: reason || '' });
+}
+
 function applyValues(values, remote) {
+  if (remote) {
+    values = acceptDelta(values);
+    if (!values) return;   // a repeat, or waiting on the snapshot that fills the hole
+  }
   Object.keys(values).forEach(function (id) {
     state.values[id] = values[id];
 
@@ -2591,7 +2643,18 @@ function when(epoch) {
 
 /* ------------------------------------------------------------------ socket */
 
-socket.on('connect', function () { setLinked(true); });
+socket.on('connect', function () {
+  setLinked(true);
+  resyncing = false;   // whatever we were waiting for died with the old socket
+  // Say where we are: the engine replays the deltas we missed, or answers
+  // 'resync' when our version is older than the history it still holds.
+  socket.emit('sync', { version: stateVersion });
+});
+
+/* The engine can't reach back as far as we are, so what we hold is missing
+   updates we will never see. Drop the deltas and take a whole snapshot. */
+socket.on('resync', function () { requestSnapshot('server asked'); });
+
 socket.on('disconnect', function () { setLinked(false); });
 
 socket.on('status', function (msg) {
@@ -2608,6 +2671,10 @@ socket.on('snapshot', function (snap) {
   // the same object sees every later change to the page's state.
   state = Object.assign({}, snap);
   setStatus(snap.connected);
+  // The snapshot is the truth: it is the version the page now holds, and it
+  // answers the snapshot we asked for.
+  stateVersion = Number(snap.version) || 0;
+  resyncing = false;
   if (!selectedBank || !snap.banks.some(function (b) { return b.name === selectedBank; })) {
     selectedBank = snap.bank || (snap.banks[0] && snap.banks[0].name) || null;
   }
