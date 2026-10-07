@@ -90,6 +90,29 @@ class ControlRegistryTest(unittest.TestCase):
     def test_render_groups_releases_offscreen_bindings(self):
         self.assertIn("releaseControls(into)", self.body("renderGroups"))
 
+    def test_render_groups_registers_the_bypass_switch(self):
+        # The group's bypass switch lives in the switches map, which applyToggle()
+        # reads. applyValues() does not: it looks the id up in ControlRegistry, so
+        # a bypass without a binding is a parameter whose remote updates go nowhere.
+        body = self.body("renderGroups")
+        self.assertIn("switches[group.toggle] = sw;", body)
+        self.assertIn("bindControl(group.toggle,", body)
+        self.assertIn("kind: 'switch'", body)
+        self.assertIn("applyToggle(group.toggle, value)", body)
+
+    def test_every_id_written_to_a_control_map_is_also_bound(self):
+        # applyValues() dispatches through ControlRegistry alone, so a control
+        # recorded only in one of the older maps is invisible to remote updates.
+        for name in ("makeRange", "buildDiscrete", "renderGroups"):
+            body = self.body(name)
+            written = re.findall(
+                r"\b(?:sliders|readouts|switches|selects)\[([^\]]+)\]\s*=", body)
+            self.assertTrue(written, name + " records no controls")
+            for key in written:
+                key = key.strip()
+                self.assertIn("bindControl(" + key + ",", body,
+                              name + " records " + key + " in a map without binding it")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -492,6 +492,18 @@ function renderGroups(into, groups) {
         command(group.toggle, next, 'discrete');
       });
       switches[group.toggle] = sw;
+      // applyValues() resolves an id through ControlRegistry alone, so the
+      // bypass has to be bound here too -- otherwise a remote change to it
+      // (another device, or a preset loading) finds no binding and is dropped.
+      bindControl(group.toggle, {
+        kind: 'switch',
+        el: sw,
+        apply: function (value, remote) {
+          const was = sw.classList.contains('is-on');
+          applyToggle(group.toggle, value);
+          if (remote && was !== sw.classList.contains('is-on')) flash(sw, 'is-remote');
+        }
+      });
       head.appendChild(sw);
     }
 
