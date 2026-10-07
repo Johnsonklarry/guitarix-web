@@ -33,9 +33,86 @@ log = logging.getLogger("player")
 
 MPV = "mpv"
 
+# ------------------------------------------------------------------- flags
+#
+# What player.py is allowed to put on an mpv command line, and what a latency
+# benchmark is allowed to vary. mpv ignores flags it doesn't know and only
+# warns, so a typo -- or a flag nobody ever measured -- would otherwise turn up
+# in a report looking like a measurement. Naming the schema here makes that a
+# loud failure at the point the command line is built.
+#
+# mpv has two kinds of flag -- the ones that stand alone and the ones that want
+# a value -- so there are two tables. Anything in neither one is undocumented.
 
-def mpv_args(client, sock, path, volume, loop):
-    return [
+MPV_BOOLEAN_FLAGS = frozenset({
+    "--no-config",        # ours, not whatever is in the user's mpv.conf
+    "--no-video",
+    "--no-terminal",
+    "--really-quiet",
+    "--pause",
+    "--jack-connect",     # we do the wiring, so it lands where we choose
+    "--jack-autostart",   # never start a second JACK server by accident
+    "--no-audio-display",
+    "--gapless-audio",
+})
+
+_MPV_ON_OFF = frozenset({"yes", "no", "true", "false", "1", "0"})
+
+
+def _is_number(value):
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+# flag -> what its value has to look like.
+MPV_VALUE_FLAGS = {
+    "--ao": lambda value: value == "jack",
+    "--jack-name": lambda value: value != "",
+    "--jack-port": lambda value: value != "",
+    "--audio-buffer": _is_number,          # seconds; the benchmark's knob
+    "--input-ipc-server": lambda value: value != "",
+    "--volume": _is_number,
+    "--loop-file": lambda value: value in ("no", "inf"),
+}
+
+MPV_FLAGS = frozenset(MPV_BOOLEAN_FLAGS) | frozenset(MPV_VALUE_FLAGS)
+
+
+def validate_mpv_flags(flags):
+    """True if every flag is one we've measured; ValueError on the first that isn't.
+
+    Positional arguments (the file to play) are ignored: mpv_args() puts the
+    path at the end of its list and it is not a flag.
+    """
+    for flag in flags:
+        if not isinstance(flag, str):
+            raise ValueError("mpv flags must be strings, got %r" % (flag,))
+        if not flag.startswith("--"):
+            continue
+        name, sep, value = flag.partition("=")
+        if name in MPV_BOOLEAN_FLAGS:
+            if sep and value not in _MPV_ON_OFF:
+                raise ValueError("%s takes yes or no, not %r" % (name, value))
+            continue
+        allowed = MPV_VALUE_FLAGS.get(name)
+        if allowed is None:
+            raise ValueError("undocumented mpv flag: %s" % name)
+        if not sep or not allowed(value):
+            raise ValueError("mpv flag %s got an undocumented value: %r" % (name, value))
+    return True
+
+
+def mpv_args(client, sock, path, volume, loop, audio_buffer=None):
+    """The mpv command line for one player.
+
+    `audio_buffer`, when given, is in seconds and sets mpv's own buffer in
+    front of JACK -- the knob the latency benchmark varies. Leaving it out
+    keeps mpv's default, which is what ordinary playback uses.
+    """
+    args = [
         MPV, "--no-config", "--no-video", "--no-terminal", "--really-quiet",
         "--ao=jack", "--jack-name=" + client,
         "--jack-connect=no",          # we do the wiring, so it lands where we choose
@@ -46,6 +123,9 @@ def mpv_args(client, sock, path, volume, loop):
         "--loop-file=" + ("inf" if loop else "no"),
         path,
     ]
+    if audio_buffer is not None:
+        args.insert(-1, "--audio-buffer=%s" % audio_buffer)
+    return args
 
 
 class PlayerError(Exception):

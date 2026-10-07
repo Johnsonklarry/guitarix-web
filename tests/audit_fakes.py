@@ -1,8 +1,80 @@
 import ast
 import os
 import sys
+import unittest
 
 POSITIONAL_ONLY = ("jack_connect", "jack_disconnect")
+
+
+def parse_systemd_unit(path):
+    """Parse a systemd unit file into {section: {key: value}}.
+
+    Directives are stored under the section they appear in. Lines that are
+    blank, comments, or section headers are handled; a directive repeated in
+    the same section keeps the last value seen.
+    """
+    sections = {}
+    current = None
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                current = line[1:-1]
+                sections.setdefault(current, {})
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if current is None:
+                current = ""
+                sections.setdefault(current, {})
+            sections[current][key] = value
+    return sections
+
+
+def _unit_path(name):
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(tests_dir)
+    return os.path.join(project_root, name)
+
+
+class ServiceFileTests(unittest.TestCase):
+    def test_service_files_match(self):
+        web_path = _unit_path("guitarix-web.service")
+        demo_path = _unit_path("guitarix-demo.service")
+
+        web = parse_systemd_unit(web_path)
+        demo = parse_systemd_unit(demo_path)
+
+        web_service = web.get("Service", {})
+        demo_service = demo.get("Service", {})
+
+        for key in ("ExecStart", "WorkingDirectory", "Restart"):
+            self.assertIn(
+                key,
+                web_service,
+                "guitarix-web.service [Service] is missing required key %r; got %r"
+                % (key, sorted(web_service)),
+            )
+
+        for key in ("User", "Group", "WorkingDirectory", "Restart"):
+            self.assertIn(
+                key,
+                demo_service,
+                "guitarix-demo.service [Service] is missing required key %r; got %r"
+                % (key, sorted(demo_service)),
+            )
+            self.assertEqual(
+                web_service.get(key),
+                demo_service.get(key),
+                "guitarix-web.service and guitarix-demo.service disagree on %r: "
+                "web=%r demo=%r"
+                % (key, web_service.get(key), demo_service.get(key)),
+            )
 
 
 def main():
