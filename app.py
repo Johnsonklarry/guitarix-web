@@ -500,7 +500,15 @@ def done_journal_claim(op_id, op, ok):
 
 
 def done(op, ok, op_id=None):
-    """Tell the browser that started `op` it has finished, so its button settles."""
+    """Tell the browser that started `op` it has finished, so its button settles.
+
+    `op_id` is the client's durable operation id. When one is supplied the
+    result is recorded in a bounded in-memory journal, and a repeat call with
+    the same id and the same operation replays the recorded result instead of
+    reporting the freshly supplied one -- so a retried request is idempotent.
+    An id that turns up attached to a different operation is not a retry, and
+    is reported -- and recorded -- in its own right.
+    """
     if op:
         # One atomic lookup-or-record: a duplicate is replayed from the
         # journal, a first (or a reused id belonging to another operation) is
