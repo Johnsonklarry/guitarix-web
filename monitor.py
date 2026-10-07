@@ -28,7 +28,7 @@ import subprocess
 import threading
 import time
 
-from flask import Response, request
+from flask import Response
 
 import jackutil
 
@@ -79,52 +79,13 @@ def forget_playback_buffer(sid):
         _playback_buffers.pop(_session_id(sid), None)
 
 
-def _connection_sid(sock=None):
-    """
-    The session id of the connection an event arrived on.
-
-    python-socketio hands a plain event handler only the payload the client
-    sent; the connection it came in on is the one in the request context, which
-    flask-socketio publishes as request.sid. A socket -- anything carrying a
-    .sid -- passed positionally is honoured instead, so a direct caller gets the
-    same answer. None means there was no way to tell: no context, no socket.
-    """
-    explicit = getattr(sock, "sid", None)
-    if explicit is not None:
-        return explicit
-    try:
-        return request.sid
-    except (RuntimeError, AttributeError):
-        return None
-
-
-def handle_playback_buffer(data, sock=None):
-    """A client's report of its playback buffer, stored against its session."""
-    record_playback_buffer(_connection_sid(sock), data)
-
-
-def handle_disconnect(*args, **kwargs):
-    """
-    A session ended: forget what it reported. python-socketio calls this with
-    the reason the client went away -- never with a sid -- so the connection is
-    identified through the request context. Any argument is accepted, so no
-    version of the server can make this raise on the way out.
-    """
-    sock = None
-    for candidate in list(args) + list(kwargs.values()):
-        if getattr(candidate, "sid", None) is not None:
-            sock = candidate
-            break
-    forget_playback_buffer(_connection_sid(sock))
-
-
 def register_broadcast_handlers(socketio):
     """
     Let broadcast clients report their playback buffer and nothing else. Every
     other event stays blocked, exactly as GX_BROADCAST=1 intends.
     """
-    socketio.on("playback_buffer")(handle_playback_buffer)
-    socketio.on("disconnect")(handle_disconnect)
+    socketio.on("playback_buffer")(lambda data, sid=None: record_playback_buffer(sid, data))
+    socketio.on("disconnect")(lambda sid=None: forget_playback_buffer(sid))
 
 
 CLIENT = "gxweb-mon"

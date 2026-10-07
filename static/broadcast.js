@@ -1,8 +1,7 @@
 /*
- * The broadcast page's client. It listens almost exclusively: the one event it
- * sends is the playback buffer it is holding, and the server allows exactly
- * that -- GX_BROADCAST=1 registers a blocked handler for every event but
- * connect, disconnect and playback_buffer.
+ * The broadcast page's client. It listens and never speaks: there is no emit
+ * in this file, and the server would refuse one anyway -- GX_BROADCAST=1
+ * registers a blocked handler for every event but connect and disconnect.
  *
  * Four events arrive, and nothing else:
  *
@@ -10,11 +9,6 @@
  *   preset    {bank, preset}
  *   status    {connected}
  *   rec       {recording, count}
- *
- * One event leaves:
- *
- *   playback_buffer  {seconds}  how far ahead of the playhead this listener
- *                               has the stream buffered
  */
 
 (function () {
