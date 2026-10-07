@@ -81,10 +81,27 @@ class ConfinedFileRoutesTest(unittest.TestCase):
         self.assertEqual(app_module._confined(self.rec_dir, "take.wav"),
                          os.path.join(self.rec_dir, "take.wav"))
 
-    def test_confined_refuses_names_that_leave_the_root(self):
+    def test_confined_refuses_a_name_with_a_dotdot_segment(self):
+        # Any ".." *segment* is refused, whether or not it would escape:
+        # "sub/../take.wav" would land back inside the root, but a name that
+        # can walk up at all isn't one worth reasoning about.
         for name in ("../app.py", "../../etc/passwd", "sub/../take.wav", "..", "", None):
             with self.subTest(name=name):
                 self.assertIsNone(app_module._confined(self.rec_dir, name))
+
+    def test_confined_drops_a_directory_part_and_keeps_the_basename(self):
+        # A directory part with no ".." is not a traversal: the basename is
+        # what gets joined to the root. Some clients send an upload's
+        # filename as a full path, so this is deliberate, not a hole.
+        self.assertEqual(app_module._confined(self.rec_dir, "sub/take.wav"),
+                         os.path.join(self.rec_dir, "take.wav"))
+        self.assertEqual(app_module._confined(self.rec_dir, r"sub\take.wav"),
+                         os.path.join(self.rec_dir, "take.wav"))
+
+    def test_confined_allows_dotdot_inside_a_name(self):
+        # Only whole segments are refused, so this is an ordinary file name.
+        self.assertEqual(app_module._confined(self.rec_dir, "..take.wav", must_exist=False),
+                         os.path.join(self.rec_dir, "..take.wav"))
 
     def test_confined_refuses_a_name_that_is_not_there(self):
         self.assertIsNone(app_module._confined(self.rec_dir, "missing.wav"))
@@ -107,6 +124,13 @@ class ConfinedFileRoutesTest(unittest.TestCase):
         response = self.client.get("/backing/track.mp3")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, b"backing track bytes")
+
+    def test_a_directory_part_in_a_get_names_no_subdirectory(self):
+        # The route takes <path:name>, so a "sub/" prefix reaches the view;
+        # it is dropped, and the root's own take.wav is what is served.
+        response = self.client.get("/recordings/sub/take.wav")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"not really audio")
 
     def test_traversal_gets_are_refused(self):
         for path in ("/recordings/../app.py", "/backing/../../etc/passwd"):
@@ -178,6 +202,19 @@ class ConfinedFileRoutesTest(unittest.TestCase):
         response = self.client.post(
             "/backing",
             data={"file": (io.BytesIO(b"payload"), "new.mp3")},
+            content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(response.get_json()["ok"], True)
+        self.assertEqual(self.saved, ["new.mp3"])
+        self.assertTrue(os.path.isfile(os.path.join(self.backing_dir, "new.mp3")))
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["backing", "recordings"])
+
+    def test_upload_hands_the_library_the_name_it_checked(self):
+        # Whatever path the client sends, what reaches backing.save_upload is
+        # the plain file name the confinement check approved.
+        response = self.client.post(
+            "/backing",
+            data={"file": (io.BytesIO(b"payload"), "sub/new.mp3")},
             content_type="multipart/form-data")
         self.assertEqual(response.status_code, 200)
         self.assertIs(response.get_json()["ok"], True)

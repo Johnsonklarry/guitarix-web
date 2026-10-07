@@ -744,14 +744,21 @@ def _confined(root, name, must_exist=True):
     """
     The one place where a name from a URL or an upload becomes a path.
 
-    Returns the absolute path only when the name is a plain file name that
-    lands directly inside root. A name carrying a directory part or a ".."
-    is refused, so no caller ever joins a request straight into the
-    filesystem. Uploads pass must_exist=False: they name the file they are
-    about to write, which is not there yet.
+    Returns the absolute path of `root` joined with the name's final
+    component, or None when the name can't be trusted with that. A name
+    carrying a ".." path component is refused outright; any other directory
+    part is dropped, so the result is always one plain file name inside
+    `root` -- it is never the name that decides where in the filesystem it
+    lands. Whole components are compared, never substrings, so "..take.wav"
+    is an ordinary file name. The directory part is dropped rather than
+    refused because some browsers send an upload's filename as a full client
+    path, and only its last component is of any use.
+    Uploads pass must_exist=False: they name the file they are about to
+    write, which is not there yet.
     """
     root = os.path.abspath(root)
     name = (name or "").replace("\\", "/")
+    # whole segments only, so "..take.wav" stays an ordinary file name
     if not name or ".." in name.split("/"):
         return None
     path = os.path.abspath(os.path.join(root, os.path.basename(name)))
@@ -810,10 +817,13 @@ def backing_upload():
     saved = []
     try:
         for f in files:
-            if _confined(backing.dir, f.filename, must_exist=False) is None:
+            safe = _confined(backing.dir, f.filename, must_exist=False)
+            if safe is None:
                 return jsonify({"ok": False, "error": "That file name leaves the backing folder.",
                                 "saved": saved}), 400
-            saved.append(backing.save_upload(f.filename, f.stream))
+            # hand the library the name that was checked, not the raw one from
+            # the client, so the guard and the write can't drift apart
+            saved.append(backing.save_upload(os.path.basename(safe), f.stream))
     except (BackingError, OSError) as exc:
         return jsonify({"ok": False, "error": str(exc), "saved": saved}), 400
     return jsonify({"ok": True, "saved": saved})
