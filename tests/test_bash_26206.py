@@ -76,30 +76,28 @@ class SharedLayerOrderTest(unittest.TestCase):
         self.markup = TEMPLATE.read_text(encoding="utf-8")
         self.assets = asset_order(self.markup)
 
-    def position(self, needle):
-        position = position_of(self.assets, needle)
+    def position(self, needle, assets=None):
+        """Index of *needle* in *assets*, falling back to the template's."""
+        position = position_of(self.assets if assets is None else assets, needle)
         self.assertIsNotNone(
             position,
             "templates/index.html no longer references %s" % needle,
         )
         return position
 
-    def rig_position(self):
-        return self.position(RIG_STYLESHEET)
+    def assert_layer_precedes_the_rig_stylesheet(self, needle, assets):
+        """The one ordering check shared by every test below."""
+        self.assertLess(
+            self.position(needle, assets),
+            self.position(RIG_STYLESHEET, assets),
+            "%s must load before %s" % (needle, RIG_STYLESHEET),
+        )
 
     def test_shared_stylesheet_loads_before_the_rig_stylesheet(self):
-        self.assertLess(
-            self.position(SHARED_STYLESHEET),
-            self.rig_position(),
-            "the vendored theme kit stylesheet must load before style.css",
-        )
+        self.assert_layer_precedes_the_rig_stylesheet(SHARED_STYLESHEET, self.assets)
 
     def test_shared_script_loads_before_the_rig_stylesheet(self):
-        self.assertLess(
-            self.position(SHARED_SCRIPT),
-            self.rig_position(),
-            "the vendored theme kit script must load before style.css",
-        )
+        self.assert_layer_precedes_the_rig_stylesheet(SHARED_SCRIPT, self.assets)
 
     def test_each_shared_layer_is_referenced_exactly_once(self):
         for needle in (SHARED_STYLESHEET, SHARED_SCRIPT):
@@ -110,23 +108,16 @@ class SharedLayerOrderTest(unittest.TestCase):
                 "expected exactly one %s reference, found %r" % (needle, matches),
             )
 
-    def test_markup_puts_both_shared_layers_before_the_rig_stylesheet(self):
-        rig = self.markup.index(RIG_STYLESHEET)
-        for layer in (SHARED_STYLESHEET, SHARED_SCRIPT):
-            self.assertLess(
-                self.markup.index(layer),
-                rig,
-                "%s must appear before %s in the template" % (layer, RIG_STYLESHEET),
-            )
-
     def test_guard_rejects_the_rejected_ordering(self):
-        """The arrangement the earlier attempt shipped must not pass."""
-        assets = asset_order(REJECTED_ORDERING)
-        self.assertGreater(
-            position_of(assets, SHARED_SCRIPT),
-            position_of(assets, RIG_STYLESHEET),
-            "the guard would not have caught style.css loading before theme.js",
-        )
+        """The arrangement the earlier attempt shipped must not pass.
+
+        The real ordering check is run against the rejected markup and has to
+        fail there: if it were weakened, removed or inverted, this test would
+        stop seeing an AssertionError and start failing itself.
+        """
+        rejected = asset_order(REJECTED_ORDERING)
+        with self.assertRaises(AssertionError):
+            self.assert_layer_precedes_the_rig_stylesheet(SHARED_SCRIPT, rejected)
 
 
 if __name__ == "__main__":
