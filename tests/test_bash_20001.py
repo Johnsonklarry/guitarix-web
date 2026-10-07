@@ -126,17 +126,27 @@ class Ping2EmitTests(unittest.TestCase):
             sys.modules.pop("spike_latency", None)
             sys.modules.update(saved)
 
-    def test_registered_handler_emits_ping2(self):
-        """The 'ping2' entry point is the same emit, with a callback."""
-        with patch.object(spike_latency, "socketio", self.sio), \
-                patch.object(spike_latency.threading, "Timer"):
+    def test_registered_handler_does_not_re_emit(self):
+        """on_ping2 answers with its return value and emits nothing.
+
+        A server-initiated 'ping2' here would be a second round trip the page
+        never acks (it acks only the pings it starts), so the timeout would
+        fire on the healthy path, on every client ping.
+        """
+        with patch.object(spike_latency, "socketio", self.sio):
             reply = spike_latency.on_ping2({"t": 999})
 
-        args, kwargs = self.sio.emit.call_args
-        self.assertEqual(args[0], "ping2")
-        self.assertIsInstance(args[1], dict)
-        self.assertTrue(callable(kwargs["callback"]))
+        self.assertEqual(self.sio.emit.call_count, 0)
         self.assertEqual(reply["client"], 999)
+        self.assertIn("server", reply)
+
+    def test_registered_handler_copes_with_a_missing_payload(self):
+        """A non-dict payload still gets an answer, and still emits nothing."""
+        with patch.object(spike_latency, "socketio", self.sio):
+            reply = spike_latency.on_ping2(None)
+
+        self.assertEqual(self.sio.emit.call_count, 0)
+        self.assertIsNone(reply["client"])
         self.assertIn("server", reply)
 
 

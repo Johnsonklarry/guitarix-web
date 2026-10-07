@@ -232,13 +232,19 @@ def ping2_timed_out(payload):
 
 def emit_ping2(sio, payload=None, timeout=PING2_TIMEOUT, on_timeout=None):
     """
-    Emit "ping2" and cap the round trip.
+    Emit a server-initiated "ping2" and cap the round trip.
 
     socket.emit() with an ack callback waits for ever: a peer that stops
     answering leaves the exchange hanging and nothing reports it. A timer
     fires the error callback instead. An ack that does arrive cancels the
     timer; one that arrives late is ignored rather than firing the error a
-    second time.
+    second time. The "acked" flag, set under the lock, is what guarantees a
+    single firing -- cancelling the timer is not, and a late ack is ignored
+    because the flag is already set.
+
+    For a ping the server starts. Do NOT call this from on_ping2: the page
+    acks only the exchanges it initiates, so a ping sent in reply to one of
+    those is never acked and this timeout fires on the healthy path.
     """
     payload = {"t": now_ms(), **(payload or {})}
     handler = on_timeout or ping2_timed_out
@@ -248,7 +254,7 @@ def emit_ping2(sio, payload=None, timeout=PING2_TIMEOUT, on_timeout=None):
     def ack(reply=None):
         with lock:
             done["acked"] = True
-        timer.cancel()
+            timer.cancel()
         return reply
 
     def expire():
@@ -270,12 +276,13 @@ def on_ping2(msg):
     """
     Round trip, so the page can line its clock up with ours.
 
-    The reply still goes back as the handler's return value; the emit is the
-    same exchange bounded by a timeout, so a peer that stops answering shows
-    up as an error callback instead of silence.
+    The reply goes back as this handler's return value, and nothing else. The
+    page acks only the pings it starts, so an emit from here would be a
+    second, unanswered round trip whose timeout fires on the healthy path --
+    once per client ping. The timeout for the exchange that does happen lives
+    on the client's own emit (sync() in PAGE).
     """
     client = msg.get("t") if isinstance(msg, dict) else None
-    emit_ping2(socketio, msg if isinstance(msg, dict) else {})
     return {"client": client, "server": now_ms()}
 
 
