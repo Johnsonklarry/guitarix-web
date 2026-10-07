@@ -104,28 +104,88 @@ def asset(filename):
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
 # Broadcast mode refuses control events by never registering their handlers.
-# Wrapping the decorator rather than guarding inside each one means a handler
-# added later is refused too, without anyone having to remember.
+# Rather than monkey-patching socketio.on, every handler is registered through
+# this adapter, which applies a deny-by-default access policy: an event is
+# reachable only if it is explicitly allowed for the active mode. A handler
+# added later is refused too, without anyone having to remember, because the
+# adapter is the only registration path.
 BROADCAST_EVENTS = frozenset(("connect", "disconnect"))
-_socketio_on = socketio.on
+
+# Events that may be registered (and therefore reached) in each mode. Anything
+# not listed for the active mode is denied. "studio" is the full control
+# surface; "demo" and "broadcast" are read-only observers.
+MODE_ALLOWED_EVENTS = {
+    "studio": None,          # None == allow every registered event
+    "demo": frozenset(("connect", "disconnect", "snapshot")),
+    "broadcast": frozenset(("connect", "disconnect", "snapshot")),
+}
+
+# Fields the public-state serializer may expose, per mode. Studio sees the
+# whole state; demo and broadcast see only the allow-listed public fields.
+PUBLIC_STATE_FIELDS = {
+    "studio": None,          # None == every field
+    "demo": frozenset(("connected", "preset", "bypass", "recording",
+                       "count", "mode")),
+    "broadcast": frozenset(("connected", "preset", "bypass", "recording",
+                            "count", "mode")),
+}
 
 
-def _broadcast_guarded_on(event, *a, **kw):
-    register = _socketio_on(event, *a, **kw)
-    if not BROADCAST or event in BROADCAST_EVENTS:
-        return register
-
-    def refuse(fn):
-        def blocked(*_a, **_kw):
-            log.warning("broadcast: refused %s", event)
-            return False
-        blocked.__name__ = getattr(fn, "__name__", "blocked")
-        register(blocked)
-        return fn
-    return refuse
+def _active_mode():
+    """The access-policy mode in force for this process."""
+    if DEMO_ONLY:
+        return "demo"
+    if BROADCAST:
+        return "broadcast"
+    return "studio"
 
 
-socketio.on = _broadcast_guarded_on
+class AccessPolicy:
+    """
+    Deny-by-default gate for socket handlers and public-state serialization.
+
+    Handlers are registered through :meth:`on`; an event whose name is not
+    allowed for the active mode is registered as a refusing stub, so it is
+    never reachable and cannot bypass the policy. :meth:`public_state` filters
+    the state dict down to the allow-listed fields for the active mode.
+    """
+
+    def __init__(self, sio, mode=None):
+        self.sio = sio
+        self.mode = mode or _active_mode()
+        self._registered = set()
+
+    def allows(self, event):
+        allowed = MODE_ALLOWED_EVENTS.get(self.mode, frozenset())
+        if allowed is None:
+            return True
+        return event in allowed
+
+    def on(self, event, *a, **kw):
+        """Register a handler for *event* under the active policy."""
+        register = self.sio.on(event, *a, **kw)
+        self._registered.add(event)
+        if self.allows(event):
+            return register
+
+        def refuse(fn):
+            def blocked(*_a, **_kw):
+                log.warning("%s: refused %s", self.mode, event)
+                return False
+            blocked.__name__ = getattr(fn, "__name__", "blocked")
+            register(blocked)
+            return fn
+        return refuse
+
+    def public_state(self, state):
+        """Serialize *state* for the active mode, allow-listing fields."""
+        fields = PUBLIC_STATE_FIELDS.get(self.mode)
+        if fields is None:
+            return dict(state)
+        return {k: v for k, v in state.items() if k in fields}
+
+
+policy = AccessPolicy(socketio)
 
 # The push side needs the same treatment. flusher(), on_ready() and the preset
 # hooks all emit the full state, and a broadcast viewer is on the same wire as
@@ -146,7 +206,20 @@ def _broadcast_guarded_emit(event, data=None, *a, **kw):
     return _socketio_emit(event, data, *a, **kw)
 
 
-socketio.emit = _broadcast_guarded_emit
+# Emission goes through the same adapter so the policy is the single place
+# that decides what leaves the process. The adapter keeps the original emit
+# for allowed events and drops denied ones.
+_socketio_emit = socketio.emit
+
+
+def _policy_guarded_emit(event, *a, **kw):
+    if not policy.allows(event):
+        log.warning("%s: refused emit %s", policy.mode, event)
+        return None
+    return _socketio_emit(event, *a, **kw)
+
+
+socketio.emit = _policy_guarded_emit
 
 # op_done has to reach the browser that started the operation, not every
 # connected client. A socket handler knows its client (request.sid), but the
