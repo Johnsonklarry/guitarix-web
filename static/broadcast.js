@@ -72,7 +72,6 @@
   // the server so it can see what listeners are actually experiencing. The
   // audio element is the only thing that knows, so it is measured here.
   var BUFFER_INTERVAL = 2000;
-  var bufferTimer = null;   // the running report timer, or null when stopped
 
   function bufferedAhead() {
     if (!E.stream || typeof E.stream.buffered !== 'object' || !E.stream.buffered) return null;
@@ -87,29 +86,12 @@
   }
 
   function reportBuffer() {
-    // While the link is down an emit would only be queued by socket.io and
-    // delivered, stale, once the socket is back, so nothing is said until it is
-    // up again.
-    if (!socket.connected) return;
     var ahead = bufferedAhead();
     if (ahead === null || !isFinite(ahead)) return;
     socket.emit('playback_buffer', {seconds: ahead});
   }
 
-  function startBufferReports() {
-    if (bufferTimer !== null) return;
-    reportBuffer();
-    bufferTimer = setInterval(reportBuffer, BUFFER_INTERVAL);
-  }
-
-  function stopBufferReports() {
-    if (bufferTimer === null) return;
-    clearInterval(bufferTimer);
-    bufferTimer = null;
-  }
-
-  // The link may already be up by the time this script runs.
-  if (socket.connected) startBufferReports();
+  setInterval(reportBuffer, BUFFER_INTERVAL);
 
   function setLink(up) {
     if (E.pilot) E.pilot.classList.toggle('is-on', !!up);
@@ -172,7 +154,6 @@
     // whole of it goes rather than being replayed. Nothing queued is still
     // current, so the ceiling for this discard is zero.
     discardStaleAudio(0);
-    stopBufferReports();
     setLink(false);
     setRolling(false);
   });
@@ -180,7 +161,6 @@
   socket.on('connect', function () {
     // Wait for the snapshot before claiming anything about the amp.
     setLink(true);
-    startBufferReports();
   });
 
   setLink(false);
