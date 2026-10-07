@@ -191,14 +191,21 @@ policy = AccessPolicy(socketio)
 # hooks all emit the full state, and a broadcast viewer is on the same wire as
 # everyone else -- so filter at the emit, once, rather than at each call site.
 BROADCAST_EMITS = frozenset(("snapshot", "preset", "status", "rec"))
+
+# Emits that are private replies rather than fan-out broadcasts. They are
+# addressed with to=<sid> -- op_done reaches the browser that started the
+# operation that way -- so the fan-out filter has to let them through
+# untouched. The names are listed explicitly instead of inferring a private
+# reply from `to` being present: an addressed emit is still an emit, and
+# keying the bypass on `to` alone would let every addressed event publish
+# un-sanitised state (a full `snapshot`, say) to a broadcast client.
+BROADCAST_PRIVATE_EMITS = frozenset(("op_done",))
 _socketio_emit = socketio.emit
 
 
 def _broadcast_guarded_emit(event, data=None, *a, **kw):
-    # An emit carrying to=<sid> is a private reply, not a fan-out broadcast:
-    # op_done reaches the browser that started the operation that way, so let
-    # it through untouched instead of dropping it with the rest.
-    if BROADCAST and not kw.get("to"):
+    private_reply = bool(kw.get("to")) and event in BROADCAST_PRIVATE_EMITS
+    if BROADCAST and not private_reply:
         if event not in BROADCAST_EMITS:
             return
         if event == "snapshot":
@@ -210,16 +217,14 @@ def _broadcast_guarded_emit(event, data=None, *a, **kw):
 
 
 # Emission goes through the same adapter so the policy is the single place
-# that decides what leaves the process. The adapter keeps the original emit
-# for allowed events and drops denied ones.
-_socketio_emit = socketio.emit
-
-
+# that decides what leaves the process. An allowed event is handed to the
+# broadcast filter -- the layer that sanitises a fan-out snapshot and trims
+# `rec` -- which then writes through the raw emit captured above.
 def _policy_guarded_emit(event, *a, **kw):
     if not policy.allows(event):
         log.warning("%s: refused emit %s", policy.mode, event)
         return None
-    return _socketio_emit(event, *a, **kw)
+    return _broadcast_guarded_emit(event, *a, **kw)
 
 
 socketio.emit = _policy_guarded_emit

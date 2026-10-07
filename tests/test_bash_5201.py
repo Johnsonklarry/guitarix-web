@@ -5,7 +5,9 @@ In broadcast mode every event that is not in BROADCAST_EMITS is dropped. But
 op_done is not a fan-out event: it is a private reply, addressed to the one
 client that started an operation via the ``to=<sid>`` kwarg. The broadcast
 filter has to let an addressed emit through untouched, while the untargeted
-fan-out events keep being filtered and sanitised.
+fan-out events keep being filtered and sanitised. Only the events named in
+app.BROADCAST_PRIVATE_EMITS get that treatment; an addressed emit of anything
+else is filtered and sanitised like any other fan-out.
 
 app.py imports flask and flask_socketio at module scope and this harness has
 neither installed, so both are stood up in sys.modules before ``import app``.
@@ -140,6 +142,38 @@ class BroadcastRoutingTest(unittest.TestCase):
         # to=None means "no addressee", so this is still the filtered fan-out.
         self.assertFalse(kw.get("to"))
 
+    def test_addressed_snapshot_is_still_sanitised(self):
+        """A snapshot carrying to=<sid> is not a private reply: it sanitises."""
+        with mock.patch.object(app, "BROADCAST", True), \
+                mock.patch.object(app, "broadcast_snapshot",
+                                  return_value={"sentinel": 1}):
+            app._broadcast_guarded_emit("snapshot", {"stale": 2}, to="sid-abc")
+
+        self.assertEqual(len(self.emitted), 1)
+        event, data, _args, kw = self.emitted[0]
+        self.assertEqual(event, "snapshot")
+        self.assertEqual(data, {"sentinel": 1})
+        self.assertEqual(kw, {"to": "sid-abc"})
+
+    def test_addressed_rec_is_still_trimmed(self):
+        with mock.patch.object(app, "BROADCAST", True):
+            app._broadcast_guarded_emit(
+                "rec", {"recording": True, "count": 3, "secret": "x"},
+                to="sid-abc")
+
+        self.assertEqual(len(self.emitted), 1)
+        event, data, _args, kw = self.emitted[0]
+        self.assertEqual(event, "rec")
+        self.assertEqual(data, {"recording": True, "count": 3})
+        self.assertEqual(kw, {"to": "sid-abc"})
+
+    def test_addressed_event_outside_the_private_allow_list_is_dropped(self):
+        """Only a named private reply may skip the fan-out filter."""
+        with mock.patch.object(app, "BROADCAST", True):
+            app._broadcast_guarded_emit("toast", {"text": "hi"}, to="sid-abc")
+
+        self.assertEqual(self.emitted, [])
+
     def test_broadcast_rec_is_trimmed(self):
         with mock.patch.object(app, "BROADCAST", True):
             app._broadcast_guarded_emit(
@@ -150,6 +184,26 @@ class BroadcastRoutingTest(unittest.TestCase):
         self.assertEqual(event, "rec")
         self.assertEqual(data, {"recording": True, "count": 3})
         self.assertEqual(kw, {})
+
+    # -- wiring -----------------------------------------------------------
+
+    def test_allowed_emit_routes_through_the_broadcast_filter(self):
+        """socketio.emit is the policy guard, and it must reach the sanitizer."""
+        with mock.patch.object(app, "BROADCAST", True), \
+                mock.patch.object(app, "broadcast_snapshot",
+                                  return_value={"sentinel": 1}):
+            app.socketio.emit("snapshot", {"stale": 2})
+
+        self.assertEqual(len(self.emitted), 1)
+        event, data, _args, _kw = self.emitted[0]
+        self.assertEqual(event, "snapshot")
+        self.assertEqual(data, {"sentinel": 1})
+
+    def test_denied_emit_never_reaches_the_broadcast_filter(self):
+        with mock.patch.object(app.policy, "mode", "broadcast"):
+            app.socketio.emit("toast", {"text": "hi"})
+
+        self.assertEqual(self.emitted, [])
 
     def test_non_broadcast_passthrough_unchanged(self):
         with mock.patch.object(app, "BROADCAST", False):
