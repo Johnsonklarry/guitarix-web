@@ -10,11 +10,21 @@ from collections import OrderedDict
 class FakeEngine:
     def __init__(self):
         self.port = int(os.environ.get('GX_PORT', 7000))
-        # Opt-in per-method fault injection. Maps a JSON-RPC method name to a
-        # dict of fault settings, e.g. {'get': {'delay': 0.5}} or
-        # {'set': {'drop': True}}. Empty by default so normal request handling
-        # is completely unchanged when faults are disabled.
-        self.faults = {}
+        # Opt-in fault injection, configured through the GX_FAULTS environment
+        # variable (a JSON object). Per-method entries keyed by JSON-RPC method
+        # name, e.g. {'get': {'delay': 0.5}} or {'set': {'drop': True}}, are
+        # honoured by _apply_fault(). Recognised top-level transition faults:
+        #   'stall_set' / 'stall_setpreset' - sleep 0.2s in the matching
+        #       notification branch before applying its values
+        #   'crash_on' - name of a method whose branch calls os._exit(1) after
+        #       applying its values, simulating a mid-transition crash
+        # Empty by default so normal request handling is completely unchanged
+        # when faults are disabled.
+        try:
+            raw_faults = json.loads(os.environ.get('GX_FAULTS', '') or '{}')
+            self.faults = raw_faults if isinstance(raw_faults, dict) else {}
+        except (TypeError, ValueError):
+            self.faults = {}
         # Log of every fault that was actually triggered, in order.
         self.fault_log = []
         self.values = {
@@ -165,6 +175,9 @@ class FakeEngine:
         elif method == 'set':
             # This is a notification, no reply
             if call_id is None:
+                if self.faults.get('stall_set'):
+                    time.sleep(0.2)
+
                 changes = {}
                 for i in range(0, len(params), 2):
                     if i + 1 < len(params):
@@ -173,6 +186,9 @@ class FakeEngine:
                         self.values[pid] = value
                         changes[pid] = value
                 
+                if self.faults.get('crash_on') == 'set':
+                    os._exit(1)
+
                 # Broadcast changes to other clients
                 if changes:
                     broadcast_params = []
@@ -200,6 +216,9 @@ class FakeEngine:
         elif method == 'setpreset':
             # This is a notification, no reply
             if call_id is None:
+                if self.faults.get('stall_setpreset'):
+                    time.sleep(0.2)
+
                 bank_name = params[0]
                 preset_name = params[1]
                 preset_key = f'{bank_name}/{preset_name}'
@@ -212,6 +231,9 @@ class FakeEngine:
                     # bank alongside the name, so both have to move together.
                     self.values['system.current_bank'] = bank_name
                     self.values['system.current_preset'] = preset_name
+
+                    if self.faults.get('crash_on') == 'setpreset':
+                        os._exit(1)
 
                     # Broadcast changes to other clients
                     broadcast_params = []
