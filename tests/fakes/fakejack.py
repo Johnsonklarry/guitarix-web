@@ -2,6 +2,10 @@ import json
 import os
 import tempfile
 
+FAULTS_KEY = 'faults'
+FAULT_LOG_KEY = 'fault_log'
+
+
 def _dir():
     """
     Where the graph lives. Without FAKE_JACK_DIR these tools are being run
@@ -79,6 +83,62 @@ def ports():
     return load()['ports']
 
 
+def set_faults(**faults):
+    """
+    Opt-in fault injection. Each keyword is a fault name and its value the
+    number of times it should fire (None/negative means "every time"). The
+    settings are persisted in graph.json so a fault armed by one process is
+    seen by the next, which is the whole point: the recorder and the fake
+    engine are separate processes.
+    """
+    state = load()
+    state[FAULTS_KEY] = dict(faults)
+    save(state)
+
+
+def clear_faults():
+    """Remove all fault settings and the fault log."""
+    state = load()
+    state[FAULTS_KEY] = {}
+    state[FAULT_LOG_KEY] = []
+    save(state)
+
+
+def faults():
+    """Return the current fault settings."""
+    return dict(load().get(FAULTS_KEY) or {})
+
+
+def fault_log():
+    """Return the list of faults that have fired, oldest first."""
+    return list(load().get(FAULT_LOG_KEY) or [])
+
+
+def _trigger_fault(state, name, detail):
+    """
+    Record one firing of `name` and consume one of its remaining uses.
+
+    Returns True if the fault fired. The log entry is appended before the
+    counter is decremented so a fault armed for one use still leaves a trace
+    of that single use behind for the test to assert on.
+    """
+    settings = state.get(FAULTS_KEY) or {}
+    if name not in settings:
+        return False
+
+    remaining = settings[name]
+    if remaining is not None and remaining <= 0:
+        return False
+
+    log = state.setdefault(FAULT_LOG_KEY, [])
+    log.append({'fault': name, 'detail': detail})
+
+    if remaining is not None:
+        settings[name] = remaining - 1
+
+    return True
+
+
 def add_ports(mapping):
     """Add new ports to the graph."""
     state = load()
@@ -119,6 +179,10 @@ def connect(src, dst):
     """Connect two ports. Return True on success."""
     state = load()
 
+    if _trigger_fault(state, 'drop_connect', '%s -> %s' % (src, dst)):
+        save(state)
+        return False
+
     if src not in state['ports'] or dst not in state['ports']:
         return False
 
@@ -140,6 +204,10 @@ def connect(src, dst):
 def disconnect(src, dst):
     """Disconnect two ports. Return True on success."""
     state = load()
+
+    if _trigger_fault(state, 'drop_disconnect', '%s -> %s' % (src, dst)):
+        save(state)
+        return False
 
     if src not in state['ports'] or dst not in state['ports']:
         return False
