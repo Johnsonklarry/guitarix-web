@@ -2098,6 +2098,14 @@ class _OpJournal:
     the same ID replays that stored response instead of deleting again.
     Entries older than the TTL are ignored, and the oldest ID is evicted once
     the journal reaches capacity.
+
+    An op_id that can't be hashed at all (a list or a dict out of a malformed
+    message) is not an error: it is treated as "no operation id", so the
+    request runs untracked, exactly as if the field had been left out.
+
+    One lock guards every entry, so concurrent socket threads can neither
+    corrupt the dict nor race the eviction loop. It does not, by itself, make
+    the handler's check-then-delete atomic -- see _delete_many_lock there.
     """
 
     def __init__(self, capacity=_OP_JOURNAL_CAPACITY,
@@ -2106,9 +2114,16 @@ class _OpJournal:
         self.ttl = ttl
         self._clock = clock
         self._entries = {}
+        self._lock = threading.Lock()
 
     @staticmethod
     def _key(op_id):
+        """The dict key for *op_id*, or None when it can't be a key at all.
+
+        Unhashable means "this request carries no usable operation id": it is
+        not tracked and not replayed, which is the same path as an omitted
+        op_id, so nothing is ever stored under a name that can't be looked up.
+        """
         try:
             hash(op_id)
         except TypeError:
@@ -2119,33 +2134,52 @@ class _OpJournal:
         key = self._key(op_id)
         if key is None:
             return None
-        entry = self._entries.get(key)
-        if entry is None:
-            return None
-        stored_at, value = entry
-        if self._clock() - stored_at > self.ttl:
-            del self._entries[key]
-            return None
-        return value
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            stored_at, value = entry
+            if self._clock() - stored_at > self.ttl:
+                del self._entries[key]
+                return None
+            return value
 
     def put(self, op_id, value):
         key = self._key(op_id)
         if key is None:
             return
-        self._entries.pop(key, None)
-        self._entries[key] = (self._clock(), value)
-        while len(self._entries) > self.capacity:
-            del self._entries[next(iter(self._entries))]
+        with self._lock:
+            # re-inserting keeps the dict in least-recently-stored-first order,
+            # so the eviction below drops the oldest key; both steps stay under
+            # the lock so a concurrent put can't slip between them
+            self._entries.pop(key, None)
+            self._entries[key] = (self._clock(), value)
+            while len(self._entries) > self.capacity:
+                del self._entries[next(iter(self._entries))]
 
     def __len__(self):
-        return len(self._entries)
+        with self._lock:
+            return len(self._entries)
 
 
 _op_journal = _OpJournal()
 
 
+# Batch deletions are serialized around the journal check. Locking the journal
+# by itself isn't enough: two concurrent retries carrying the same op_id would
+# both look it up, both miss it, and both delete, which is exactly what the
+# journal exists to prevent. Holding this across the check and the deletion is
+# what makes "already done?" and "do it" a single step. Deletions are rare and
+# short, so one lock for all of them is cheaper than per-op bookkeeping.
+_delete_many_lock = threading.Lock()
+
+
 def _finish_delete_many(op_id, op, ok):
-    """Remember the outcome of a batch deletion and report it to the client."""
+    """Remember the outcome of a batch deletion and report it to the client.
+
+    Caller must hold _delete_many_lock, so the record and the check it answers
+    cannot interleave with another request carrying the same op_id.
+    """
     _op_journal.put(op_id, (op, ok))
     return done(op, ok)
 
@@ -2155,23 +2189,24 @@ def client_rec_delete_many(msg):
     msg = msg or {}
     op = msg.get("op")
     op_id = msg.get("op_id")
-    cached = _op_journal.get(op_id)
-    if cached is not None:
-        return done(*cached)
-    names = msg.get("names")
-    if not isinstance(names, list) or not names:
-        toast("Couldn't delete: no takes were chosen", "error")
-        return _finish_delete_many(op_id, op, False)
-    deleted, failed = rec.delete_many(names)
-    if failed and not deleted:
-        toast("Couldn't delete them: %s" % failed[0][1], "error")
-    elif failed:
-        toast("Deleted %d of %d takes; couldn't delete %s: %s"
-              % (len(deleted), len(deleted) + len(failed), failed[0][0], failed[0][1]),
-              "error")
-    else:
-        toast("Deleted %d take%s" % (len(deleted), "" if len(deleted) == 1 else "s"), "ok")
-    return _finish_delete_many(op_id, op, not failed)
+    with _delete_many_lock:
+        cached = _op_journal.get(op_id)
+        if cached is not None:
+            return done(*cached)
+        names = msg.get("names")
+        if not isinstance(names, list) or not names:
+            toast("Couldn't delete: no takes were chosen", "error")
+            return _finish_delete_many(op_id, op, False)
+        deleted, failed = rec.delete_many(names)
+        if failed and not deleted:
+            toast("Couldn't delete them: %s" % failed[0][1], "error")
+        elif failed:
+            toast("Deleted %d of %d takes; couldn't delete %s: %s"
+                  % (len(deleted), len(deleted) + len(failed), failed[0][0], failed[0][1]),
+                  "error")
+        else:
+            toast("Deleted %d take%s" % (len(deleted), "" if len(deleted) == 1 else "s"), "ok")
+        return _finish_delete_many(op_id, op, not failed)
 
 
 _services_started = False
