@@ -77,13 +77,42 @@ def forget_playback_buffer(sid):
         _playback_buffers.pop(_session_id(sid), None)
 
 
+def _registered_disconnect(socketio):
+    """
+    The disconnect handler the application registered before us, if the server
+    exposes its handlers -- python-socketio keeps them as namespace -> event.
+    """
+    handlers = getattr(socketio, "handlers", None)
+    per_namespace = handlers.get("/") if isinstance(handlers, dict) else None
+    if not isinstance(per_namespace, dict):
+        return None
+    previous = per_namespace.get("disconnect")
+    return previous if callable(previous) else None
+
+
 def register_broadcast_handlers(socketio):
     """
     Let broadcast clients report their playback buffer and nothing else. Every
     other event stays blocked, exactly as GX_BROADCAST=1 intends.
+
+    python-socketio dispatches an event handler as handler(sid, data) and a
+    disconnect handler as handler(sid[, reason]), depending on its version, so
+    both handlers here are declared to match -- record_playback_buffer already
+    has the calling convention of an event handler. A disconnect handler the
+    application registered is still called, not silently replaced.
     """
-    socketio.on("playback_buffer")(lambda data, sid=None: record_playback_buffer(sid, data))
-    socketio.on("disconnect")(lambda sid=None: forget_playback_buffer(sid))
+    previous = _registered_disconnect(socketio)
+
+    def on_disconnect(sid=None, reason=None):
+        forget_playback_buffer(sid)
+        if previous is not None:
+            try:
+                previous(sid, reason)
+            except TypeError:
+                previous(sid)          # a handler that predates the reason argument
+
+    socketio.on("playback_buffer")(record_playback_buffer)
+    socketio.on("disconnect")(on_disconnect)
 
 
 CLIENT = "gxweb-mon"
