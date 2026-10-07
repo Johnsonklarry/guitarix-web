@@ -117,17 +117,18 @@ def child(mode):
 def main():
     failed = []
     for mode in ("broadcast", "normal", "demo"):
-        p = subprocess.run([sys.executable, os.path.abspath(__file__), "--child", mode],
-                           capture_output=True, text=True)
-        start_time = time.time()
-        timeout = 120
-        while True:
-            if p.poll() is not None:
-                break
-            if time.time() - start_time > timeout:
-                p.kill()
-                raise TimeoutError(f"Child process timed out after {timeout} seconds")
-            time.sleep(0.1)
+        try:
+            p = subprocess.run([sys.executable, os.path.abspath(__file__), "--child", mode],
+                               capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired as exc:
+            failed.append(mode)
+            print("  %-5s %s" % ("FAIL", mode))
+            print("child timed out after 120s")
+            for stream in (exc.stdout, exc.stderr):
+                if stream:
+                    print(stream if isinstance(stream, str)
+                          else stream.decode("utf-8", "replace"))
+            continue
         ok = p.returncode == 0
         print("  %-5s %s" % ("ok" if ok else "FAIL", mode))
         if not ok:
