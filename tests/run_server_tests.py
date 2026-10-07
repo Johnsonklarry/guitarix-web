@@ -427,6 +427,12 @@ def _():
         A.DEMO_ONLY = False
 
 
+@step("auth: guard is registered and refuses unauthenticated connections")
+def _():
+    check("connect" in H, "auth guard not registered in handlers")
+    check(H["connect"]() is False, "auth guard allowed unauthenticated connection")
+
+
 # ---------------------------------------------------------------- done
 engine.terminate()
 failed = [n for n, e in results if e]
