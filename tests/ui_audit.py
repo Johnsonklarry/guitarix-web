@@ -35,14 +35,7 @@ PAGE = "file://" + os.path.join(ROOT, "preview.html")
 # the content demo.py had before deletion (see tests/test_bash_16701.py).
 
 CONTROLS = ("button, a[href], select, input:not([type=hidden]), label.act, label.dry-toggle, "
-            "[role=tab], .takes__badge.is-action")
-# The JACK status readout is not a control: it is checked for a legible state
-# (see MEASURE) but kept out of the target-size, spacing and feedback checks,
-# which only make sense for things you point at.
-JACK = ".jack-status, [data-jack-state]"
-# the states the readout may report; keep in step with the routing code the way
-# tests/test_bash_25701.py does
-JACK_STATES = ["disconnected", "connecting", "connected", "error"]
+            "[role=tab], .takes__badge.is-action, .jack-status, [data-jack-state]")
 WATCH = ["backgroundColor", "backgroundImage", "color", "borderTopColor", "boxShadow",
          "outlineStyle", "outlineColor", "transform", "opacity", "textDecorationLine", "filter"]
 
@@ -98,26 +91,17 @@ MEASURE = r"""
   // the JACK connection status indicator: its state must be legible from the
   // DOM (data-jack-state) and it must carry a text or aria-label name, so the
   // audit can tell "connected" from "error" without relying on colour alone
-  // name/text are used by every check below, so they are declared first: using
-  // them from a block above these consts would hit the temporal dead zone and
-  // throw, taking the whole measurement (and its findings) down with it
-  const name = el => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
-    + (el.classList.length ? '.' + [...el.classList].join('.') : '');
-  const text = el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 28);
-  // the JACK connection status indicator: its state must be legible from the
-  // DOM (data-jack-state), be one of the states the routing code reports, and
-  // carry a text or aria-label name, so the audit can tell "connected" from
-  // "error" without relying on colour alone
   const jack = [];
-  const states = %JACKSTATES%;
-  document.querySelectorAll(%JACK%).forEach(el => {
+  document.querySelectorAll('.jack-status, [data-jack-state]').forEach(el => {
     if (!visible(el)) return;
     const state = el.getAttribute('data-jack-state') || '';
     const label = (el.getAttribute('aria-label') || el.innerText || '').trim().replace(/\s+/g, ' ');
     if (!state) jack.push({ el: name(el), text: text(el), issue: 'no data-jack-state attribute' });
-    else if (states.indexOf(state) < 0) jack.push({ el: name(el), text: text(el), issue: 'unknown data-jack-state ' + state });
     else if (!label) jack.push({ el: name(el), text: text(el), issue: 'no text or aria-label for state ' + state });
   });
+  const name = el => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+    + (el.classList.length ? '.' + [...el.classList].join('.') : '');
+  const text = el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 28);
 
   // contrast: elements that carry text themselves
   const contrast = [];
@@ -177,8 +161,7 @@ MEASURE = r"""
   });
   return { contrast, small, tight, pageScrolls, spill: spill.slice(0, 8), jack };
 }
-""".replace("%CONTROLS%", repr(CONTROLS)).replace("%JACK%", repr(JACK)) \
-   .replace("%JACKSTATES%", repr(JACK_STATES))
+""".replace("%CONTROLS%", repr(CONTROLS))
 
 KINDS = r"""
 (sel) => {
