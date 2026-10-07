@@ -19,11 +19,11 @@ checks in the ticket's test plan have nothing to run against:
   4. each transition emits one broadcast whose payload equals the snapshot
      taken immediately after it.
 
-This file pins that missing prerequisite instead of failing at import time
-with a NameError/AttributeError, and reports a single skip naming
-StateCoordinator. It inspects app.py as source rather than importing it,
-because importing app.py pulls in flask/flask-socketio and runs module-level
-socket plumbing.
+This file turns that missing prerequisite into a real, failing regression
+test: it asserts that app.py declares StateCoordinator, so the suite is red
+while the unified state API is absent and green once it exists. It inspects
+app.py as source rather than importing it, because importing app.py pulls in
+flask/flask-socketio and runs module-level socket plumbing.
 
 Run: python -m unittest tests.test_bash_19501 -v
 """
@@ -66,10 +66,10 @@ def _declared_names(path):
 class UnifiedStateCoordinatorTest(unittest.TestCase):
     def test_cross_subsystem_generation_and_broadcast(self):
         names = _declared_names(APP_PATH)
-        if names is None:
-            detail = "%s could not be read or parsed" % APP_PATH
-        elif COORDINATOR_NAME in names:
-            detail = "app.py declares %s" % COORDINATOR_NAME
-        else:
-            detail = "app.py declares no %s" % COORDINATOR_NAME
-        self.skipTest("%s -- %s." % (MISSING, detail))
+        self.assertIsNotNone(
+            names, "%s could not be read or parsed" % APP_PATH)
+        self.assertIn(
+            COORDINATOR_NAME,
+            names,
+            "%s -- app.py declares no %s." % (MISSING, COORDINATOR_NAME),
+        )
