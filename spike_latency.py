@@ -37,10 +37,21 @@ import shutil
 import struct
 import subprocess
 import sys
+import re
 import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+def parse_jack_iodelay(output, rate):
+    """Parses jack_iodelay output into a budget record."""
+    match = re.search(r"([\d.]+)\s+ms\s+total\s+roundtrip\s+latency", output)
+    ms = float(match.group(1)) if match else 0.0
+    return {
+        "roundtrip_ms": ms,
+        "period_ms": 0.0,
+        "xruns": 0
+    }
 
 try:
     from flask import Flask, Response

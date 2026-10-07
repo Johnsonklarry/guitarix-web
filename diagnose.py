@@ -225,6 +225,9 @@ def check_storage(r):
               "" if gb > 2 else "getting tight; delete some takes")
 
 
+def get_period_ms(frames, rate):
+    return round((frames / rate) * 1000, 2)
+
 def check_serving(r):
     here = os.path.dirname(os.path.abspath(__file__))
     vendored = os.path.exists(os.path.join(here, "static", "socket.io.min.js"))
