@@ -4,11 +4,19 @@ import threading
 import signal
 import sys
 import os
+import time
 from collections import OrderedDict
 
 class FakeEngine:
     def __init__(self):
         self.port = int(os.environ.get('GX_PORT', 7000))
+        # Opt-in per-method fault injection. Maps a JSON-RPC method name to a
+        # dict of fault settings, e.g. {'get': {'delay': 0.5}} or
+        # {'set': {'drop': True}}. Empty by default so normal request handling
+        # is completely unchanged when faults are disabled.
+        self.faults = {}
+        # Log of every fault that was actually triggered, in order.
+        self.fault_log = []
         self.values = {
             'amp.fuzz': 0.0,
             'amp.out_master': 0.0,
@@ -95,6 +103,35 @@ class FakeEngine:
             except:
                 pass
         
+    def _record_fault(self, method, kind, detail=None):
+        entry = {'method': method, 'fault': kind}
+        if detail is not None:
+            entry['detail'] = detail
+        self.fault_log.append(entry)
+        return entry
+
+    def _apply_fault(self, method):
+        """Apply any configured fault for `method`.
+
+        Returns True when the request should be dropped (no response and no
+        broadcast). Delays are applied in place. Every triggered fault is
+        appended to self.fault_log.
+        """
+        settings = self.faults.get(method)
+        if not settings:
+            return False
+
+        delay = settings.get('delay')
+        if delay:
+            self._record_fault(method, 'delay', delay)
+            time.sleep(delay)
+
+        if settings.get('drop'):
+            self._record_fault(method, 'drop')
+            return True
+
+        return False
+
     def _process_request(self, client_socket, line):
         try:
             request = json.loads(line)
@@ -110,6 +147,9 @@ class FakeEngine:
         method = request['method']
         params = request.get('params', [])
         call_id = request.get('id')
+        
+        if self._apply_fault(method):
+            return
         
         if method == 'get':
             if call_id is not None:
