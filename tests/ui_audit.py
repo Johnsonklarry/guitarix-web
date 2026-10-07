@@ -31,6 +31,9 @@ from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGE = "file://" + os.path.join(ROOT, "preview.html")
+# NOTE (issue #16701): this audit drives preview.html only. Neither app.py nor
+# demo.py is present in the attached files, so the claim that demo.py's content
+# was folded into app.py before deletion cannot be verified from here.
 
 CONTROLS = ("button, a[href], select, input:not([type=hidden]), label.act, label.dry-toggle, "
             "[role=tab], .takes__badge.is-action")
