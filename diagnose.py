@@ -237,6 +237,225 @@ def check_serving(r):
           else "random each start (fine -- nothing needs to outlive a restart)")
 
 
+# ------------------------------------------------------------ latency report
+
+SAMPLE_RATE = 48000
+PERIOD_FRAMES = 128
+
+# The three budgets, in the order a report lists them.
+BUDGETS = ("guitar", "reamp", "listening")
+
+BUDGET_TITLES = {
+    "guitar": "guitar path (string to speaker)",
+    "reamp": "backing/reamp (command to sound)",
+    "listening": "browser listening (amp to headphones)",
+}
+
+# The names these budgets turn up under in benchmark output. Matched loosely,
+# so a rig that reports "backing track" still lands in the right section
+# instead of being dropped on the floor.
+BUDGET_ALIASES = {
+    "guitar": "guitar",
+    "guitar path": "guitar",
+    "guitar rig": "guitar",
+    "reamp": "reamp",
+    "backing": "reamp",
+    "backing reamp": "reamp",
+    "backing track": "reamp",
+    "command to sound": "reamp",
+    "listening": "listening",
+    "browser": "listening",
+    "browser listening": "listening",
+    "monitor": "listening",
+}
+
+
+def period_ms(frames, sample_rate=SAMPLE_RATE):
+    """How long one JACK period lasts, in milliseconds.
+
+    64 frames at 48 kHz is 1.33 ms, 128 is 2.67 ms, 256 is 5.33 ms -- the
+    numbers a rollback note has to quote to be any use.
+    """
+    frames, sample_rate = float(frames), float(sample_rate)
+    if frames <= 0 or sample_rate <= 0:
+        raise ValueError("frames and sample rate must be positive, got %g at %g Hz"
+                         % (frames, sample_rate))
+    return round(frames * 1000.0 / sample_rate, 2)
+
+
+# Period sizes worth naming in a rollback note, at the default sample rate.
+PERIOD_MS = {frames: period_ms(frames) for frames in (16, 32, 64, 128, 256, 512, 1024)}
+
+
+def _budget_key(name):
+    """Which of the three budgets a record belongs to, or None if it isn't one."""
+    key = str(name).lower()
+    for ch in "/_-":
+        key = key.replace(ch, " ")
+    key = " ".join(key.split())
+    if key in BUDGET_ALIASES:
+        return BUDGET_ALIASES[key]
+    for alias, canonical in BUDGET_ALIASES.items():
+        if alias in key:
+            return canonical
+    return None
+
+
+def _number_or_none(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _iter_records(records):
+    """(name, value) pairs out of whatever the caller handed us."""
+    if not records:
+        return []
+    if isinstance(records, dict):
+        return list(records.items())
+    pairs = []
+    for record in records:
+        if isinstance(record, dict):
+            name = record.get("name", record.get("budget", record.get("label", "")))
+            pairs.append((name, record))
+        elif isinstance(record, (list, tuple)) and len(record) == 2:
+            pairs.append((record[0], record[1]))
+        else:
+            pairs.append((str(record), record))
+    return pairs
+
+
+def _record_parts(value):
+    """(measured_ms, budget_ms, xruns, detail) from a record of any shape."""
+    if isinstance(value, dict):
+        measured = value.get("measured_ms", value.get("measured", value.get("ms")))
+        budget = value.get("budget_ms", value.get("budget", value.get("limit_ms")))
+        xruns = value.get("xruns", value.get("xruns_count", 0)) or 0
+        detail = value.get("detail", value.get("note", "")) or ""
+        return _number_or_none(measured), _number_or_none(budget), int(xruns), str(detail)
+    number = _number_or_none(value)
+    if number is not None:
+        return number, None, 0, ""
+    return None, None, 0, "" if value is None else str(value)
+
+
+def _budget_lines(title, measured, budget, xruns, detail):
+    lines = ["### " + title]
+    if measured is None:
+        lines.append("not measured")
+    else:
+        text = "measured %.2f ms" % measured
+        if budget is not None:
+            text += ", budget %.2f ms -- %s" % (
+                budget, "within budget" if measured <= budget else "OVER BUDGET")
+        lines.append(text)
+    if detail:
+        lines.append(detail)
+    lines.append("xruns: %d" % xruns)
+    return lines
+
+
+def build_report(records=None, xruns=None, sample_rate=SAMPLE_RATE, frames=PERIOD_FRAMES,
+                 **budgets):
+    """Compose latency budget records into a markdown report.
+
+    `records` maps a budget name to what was measured for it. A record is a
+    dict with any of:
+
+        measured_ms   what the benchmark measured
+        budget_ms     what it was measured against
+        xruns         xruns counted during that measurement
+        detail        anything else worth printing
+
+    or just a number of milliseconds, or a string to print as-is. A list of
+    record dicts, each carrying a "name", does the same job, and a budget can
+    also be handed over as a keyword: build_report(guitar={"measured_ms": 8.5}).
+
+    Every budget gets a section whether or not it was measured, so the report
+    has the same shape every time and a measurement that is missing says so
+    rather than quietly disappearing.
+
+    `xruns` sets the total; leave it out and the per-budget counts are added
+    up. The result is markdown, with no timestamps in it: the same
+    measurements always produce the same report.
+    """
+    if budgets:
+        records = dict(records or {}, **budgets)
+
+    collected, other = {}, []
+    for name, value in _iter_records(records):
+        key = _budget_key(name)
+        if key is None:
+            other.append((str(name) or "unnamed", _record_parts(value)))
+        elif key not in collected:
+            collected[key] = _record_parts(value)
+
+    per_period = period_ms(frames, sample_rate)
+    lines = [
+        "# Latency report",
+        "",
+        "Sample rate %g Hz, period %d frames (%.2f ms per period)."
+        % (sample_rate, frames, per_period),
+        "",
+        "## Budgets",
+    ]
+
+    counted, over = 0, []
+    for key in BUDGETS:
+        measured, budget, xrun_count, detail = collected.get(key, (None, None, 0, ""))
+        counted += xrun_count
+        lines.append("")
+        lines.extend(_budget_lines(BUDGET_TITLES[key], measured, budget, xrun_count, detail))
+        if measured is not None and budget is not None and measured > budget:
+            over.append("%s is %.2f ms against a %.2f ms budget"
+                        % (BUDGET_TITLES[key], measured, budget))
+
+    if other:
+        lines.append("")
+        lines.append("## Other measurements")
+        for name, parts in other:
+            lines.append("")
+            lines.extend(_budget_lines(name, *parts))
+
+    lines.append("")
+    lines.append("## Xruns")
+    lines.append("")
+    lines.append("Total xruns: %d" % (counted if xruns is None else int(xruns)))
+    lines.append("")
+    lines.append("Xrun counts by budget:")
+    for key in BUDGETS:
+        lines.append("- %s: %d"
+                     % (BUDGET_TITLES[key], collected.get(key, (None, None, 0, ""))[2]))
+
+    steps = ", ".join("%d frames = %.2f ms" % (f, period_ms(f, sample_rate))
+                      for f in (64, 128, 256, 512))
+    lines.append("")
+    lines.append("## Rollback instructions")
+    lines.append("")
+    if over:
+        lines.append("Over budget: " + "; ".join(over) + ".")
+    else:
+        lines.append("Nothing is over budget, so nothing needs rolling back. If that changes:")
+    lines.append("")
+    lines.append("1. Put the period size back first -- every number above was measured "
+                 "against it. At %g Hz the steps are %s." % (sample_rate, steps))
+    lines.append("2. Stop the extra JACK clients the benchmark left running (mpv, "
+                 "gxweb-*), then reconnect guitarix's output to the interface's "
+                 "playback ports by hand.")
+    lines.append("3. If only the browser listening budget got worse, put the stream back "
+                 "the way it was (Socket.IO polling rather than websockets) and re-measure.")
+    lines.append("4. Re-run `python3 spike_latency.py` and `python3 app.py --check`; both "
+                 "should be back inside their budgets before you record anything real.")
+    return "\n".join(lines) + "\n"
+
+
+# The name an earlier draft of this report used; kept working.
+generate_report = build_report
+
+
 # ---------------------------------------------------------------- output
 
 def main(argv=None):
