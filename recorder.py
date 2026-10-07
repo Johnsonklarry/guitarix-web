@@ -58,6 +58,36 @@ DRY_CLIENT = "system"
 DRY_PORTS = ["system:capture_1", "system:capture_2"]
 
 
+# A take's life: it starts, its audio gets wired in, the writer opens the
+# file, the engine is asked to stop and close the header, and only then is it
+# something anyone can play. Recorder.state exposes where it currently is,
+# and listing() publishes a take only once it reaches READY -- a half-written
+# WAV, or one whose audio never arrived, is not a take. ERROR is where a take
+# ends up when something went wrong; it is never published.
+STATE_STARTING = "starting"
+STATE_WIRED = "wired"
+STATE_WRITING = "writing"
+STATE_FINALIZING = "finalizing"
+STATE_READY = "ready"
+STATE_ERROR = "error"
+STATES = (STATE_STARTING, STATE_WIRED, STATE_WRITING, STATE_FINALIZING, STATE_READY)
+TERMINAL_STATES = (STATE_READY, STATE_ERROR)
+
+# How long the source's ports get to appear and accept the connection before
+# the take is called unwireable.
+WIRING_TIMEOUT = 5
+
+# How long ffmpeg gets to close the WAV header once it has been asked to
+# stop, and then how long the kill gets to land. stop() blocks for both at
+# worst, so it can never hang on a wedged engine.
+FINALIZE_TIMEOUT = 5
+KILL_TIMEOUT = 3
+
+# How long the writer gets to open the take's file before the take counts as
+# writing anyway; the engine may buffer a moment before the first byte lands.
+WRITER_TIMEOUT = 1.0
+
+
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 
@@ -95,7 +125,10 @@ class Recorder:
         self._error = None
         self._wiring = None
         self._dry_wiring = None
+        self._state = None           # where the current take is, see STATES
+        self._sidecar = None         # the take's settings file, if it has one
         self._lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._durations = {}          # path -> (mtime, seconds)
 
     # ------------------------------------------------------------ status
@@ -107,10 +140,40 @@ class Recorder:
         proc = self._proc
         return proc is not None and proc.poll() is None
 
+    @property
+    def state(self):
+        """
+        Where the current take is: one of STATES, or STATE_ERROR if it came
+        off the rails. None before the first start(). Readable at any point,
+        from any thread -- that is the whole point of it.
+        """
+        return self._state
+
+    def _set_state(self, state, force=False):
+        """
+        Move the take along. A take that reached a terminal state stays
+        there: nothing later on -- a straggling wiring thread, a late watch
+        thread -- gets to turn a published or a failed take into something
+        else. Only start() forces a reset, for the next take.
+        """
+        with self._state_lock:
+            if not force and self._state in TERMINAL_STATES:
+                return
+            log.debug("take state: %s", state)
+            self._state = state
+
+    def _fail(self, message, state=STATE_ERROR):
+        """Park the take where listing() won't publish it, and say why."""
+        if self._error is None:
+            self._error = message
+        self._set_state(state)
+        log.error("take failed: %s", message)
+
     def status(self):
         return {
             "recording": self.recording,
             "file": os.path.basename(self._path) if self._path and self.recording else None,
+            "state": self._state,
             "dry": self._dry_proc is not None and self._dry_proc.poll() is None,
             "elapsed": round(time.time() - self._started, 1) if self.recording and self._started else 0,
             "error": self._error,
@@ -145,6 +208,8 @@ class Recorder:
             self._error = None
             self._wiring = None
             self._dry_wiring = None
+            self._sidecar = None
+            self._set_state(STATE_STARTING, force=True)
             log.info("recording to %s", path)
             try:
                 self._proc = subprocess.Popen(
@@ -171,11 +236,17 @@ class Recorder:
                     pass          # the dry capture is a bonus; the wet one still goes ahead
 
             if sidecar is not None:
+                self._sidecar = stem + ".json"
                 try:
-                    with open(stem + ".json", "w") as f:
+                    with open(self._sidecar, "w") as f:
                         json.dump(sidecar, f, indent=1)
                 except OSError:
                     log.warning("couldn't write the settings sidecar for %s", path)
+
+        # Take the answer before the wiring threads get going, so start()
+        # reports the take as it stands now -- "starting" -- rather than as it
+        # might look a moment later.
+        status = self.status()
 
         threading.Thread(target=self._wire, args=(SOURCE_CLIENT, SOURCE_PORTS, JACK_CLIENT,
                          "_wiring", "the amp"), daemon=True).start()
@@ -185,7 +256,7 @@ class Recorder:
                              "_dry_wiring", "the interface"), daemon=True).start()
             threading.Thread(target=self._watch, args=(self._dry_proc, None), daemon=True).start()
         self.on_change()
-        return self.status()
+        return status
 
     def stop(self):
         with self._lock:
@@ -193,6 +264,7 @@ class Recorder:
             if proc is None or proc.poll() is not None:
                 return self.status()
             log.info("stopping recording")
+            self._set_state(STATE_FINALIZING)
             for p in (proc, dry_proc):
                 if p is None:
                     continue
@@ -201,15 +273,25 @@ class Recorder:
                 except OSError:
                     pass
 
+        stalled = False
         for p in (proc, dry_proc):
             if p is None:
                 continue
             try:
-                p.wait(timeout=5)
+                p.wait(timeout=FINALIZE_TIMEOUT)
             except subprocess.TimeoutExpired:
                 log.warning("ffmpeg didn't stop, killing it")
+                stalled = True
                 p.kill()
-                p.wait(timeout=3)
+                try:
+                    p.wait(timeout=KILL_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    log.warning("ffmpeg ignored the kill; the take is incomplete")
+
+        if stalled:
+            self._fail("the engine didn't stop cleanly; the take wasn't published")
+        else:
+            self._finish()
 
         self.on_change()
         return self.status()
@@ -223,6 +305,8 @@ class Recorder:
             tail = (err or b"").decode("utf-8", "replace").strip().splitlines()
             setattr(self, error_attr, tail[-1] if tail else ("ffmpeg exited with %s" % code))
             log.error("ffmpeg: %s", getattr(self, error_attr))
+            if proc is self._proc:
+                self._set_state(STATE_ERROR)     # a dead engine is not a take
         if proc is self._proc:
             self._started = None
         self.on_change()
@@ -247,7 +331,7 @@ class Recorder:
             return
 
         inputs = ["%s:input_1" % jack_client, "%s:input_2" % jack_client]
-        deadline = time.time() + 5
+        deadline = time.time() + WIRING_TIMEOUT
 
         while time.time() < deadline:
             sources = self._jack_ports(client, "output", fallback_ports)
@@ -269,12 +353,53 @@ class Recorder:
                 log.info("wired %s -> %s (%s)", sources[:2], jack_client, how)
                 setattr(self, wiring_attr, None if len(sources) > 1 else
                        "one source port from %s, recorded to both channels" % source_label)
+                if jack_client == JACK_CLIENT:
+                    self._wired()
                 return
             time.sleep(0.25)
 
         msg = "couldn't wire both channels from %s into %s; check jack_lsp" % (source_label, jack_client)
         setattr(self, wiring_attr, msg)
         log.warning(msg)
+        if jack_client == JACK_CLIENT:
+            # nobody ever fed the take: it stays unpublished, and the reason
+            # goes where every other fault goes, the recorder's error field
+            self._fail(msg)
+
+    def _wired(self):
+        """
+        Both of the wet client's inputs are patched, so the take is live. The
+        writer takes a moment to open the file after the engine registers, so
+        give it that moment before calling the take "writing" -- but never
+        wait past WRITER_TIMEOUT, and never override a take that has already
+        been stopped or has failed underneath us.
+        """
+        self._set_state(STATE_WIRED)
+        deadline = time.time() + WRITER_TIMEOUT
+        while time.time() < deadline:
+            proc = self._proc
+            if proc is None or proc.poll() is not None:
+                return                     # the watcher reports what happened
+            if self._path and os.path.exists(self._path):
+                break
+            time.sleep(0.05)
+        if self._state == STATE_WIRED:
+            self._set_state(STATE_WRITING)
+
+    def _finish(self):
+        """
+        The engine is gone, so the WAV header is closed. Publish the take only
+        if what it should have left behind is really there: the audio, and the
+        settings sidecar if one was asked for.
+        """
+        name = os.path.basename(self._path) if self._path else "the take"
+        if not self._path or not os.path.isfile(self._path):
+            self._fail("no recording was written for %s" % name)
+            return
+        if self._sidecar and not os.path.isfile(self._sidecar):
+            self._fail("the settings sidecar for %s wasn't written" % name)
+            return
+        self._set_state(STATE_READY)
 
     # ------------------------------------------------------------ library
 
@@ -349,11 +474,18 @@ class Recorder:
         """
         entries = {e.name: e for e in os.scandir(self.dir) if e.is_file() and not e.name.startswith(".")}
         current = os.path.basename(self._path) if self.recording and self._path else None
+        # A take is published only once its state machine says so: until it
+        # reaches "ready" its file may be a half-written WAV, or one whose
+        # audio never arrived at all.
+        rolling = os.path.basename(self._path) if self._path else None
+        ready = self._state == STATE_READY
 
         items = []
         for name, entry in entries.items():
             stem = os.path.splitext(name)[0]
             if name.endswith(".json") or stem.endswith(DRY_SUFFIX):
+                continue
+            if name == rolling and not ready:
                 continue
             stat = entry.stat()
             dry, sidecar = self._siblings(name)
