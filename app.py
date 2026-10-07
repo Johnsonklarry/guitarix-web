@@ -2003,13 +2003,83 @@ def client_rec_delete(msg):
     done(op, True)
 
 
+_OP_JOURNAL_CAPACITY = 10000
+_OP_JOURNAL_TTL = 24 * 60 * 60
+
+
+class _OpJournal:
+    """Bounded, expiring record of finished operations keyed by operation ID.
+
+    Batch deletions are not naturally idempotent: a client that retries after
+    a dropped reply would delete the same takes twice. The first request for
+    an operation ID runs the deletion and stores the response; a retry with
+    the same ID replays that stored response instead of deleting again.
+    Entries older than the TTL are ignored, and the oldest ID is evicted once
+    the journal reaches capacity.
+    """
+
+    def __init__(self, capacity=_OP_JOURNAL_CAPACITY,
+                 ttl=_OP_JOURNAL_TTL, clock=time.monotonic):
+        self.capacity = capacity
+        self.ttl = ttl
+        self._clock = clock
+        self._entries = {}
+
+    @staticmethod
+    def _key(op_id):
+        try:
+            hash(op_id)
+        except TypeError:
+            return None
+        return op_id
+
+    def get(self, op_id):
+        key = self._key(op_id)
+        if key is None:
+            return None
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        stored_at, value = entry
+        if self._clock() - stored_at > self.ttl:
+            del self._entries[key]
+            return None
+        return value
+
+    def put(self, op_id, value):
+        key = self._key(op_id)
+        if key is None:
+            return
+        self._entries.pop(key, None)
+        self._entries[key] = (self._clock(), value)
+        while len(self._entries) > self.capacity:
+            del self._entries[next(iter(self._entries))]
+
+    def __len__(self):
+        return len(self._entries)
+
+
+_op_journal = _OpJournal()
+
+
+def _finish_delete_many(op_id, op, ok):
+    """Remember the outcome of a batch deletion and report it to the client."""
+    _op_journal.put(op_id, (op, ok))
+    return done(op, ok)
+
+
 @socketio.on("rec_delete_many")
 def client_rec_delete_many(msg):
-    op = (msg or {}).get("op")
-    names = (msg or {}).get("names")
+    msg = msg or {}
+    op = msg.get("op")
+    op_id = msg.get("op_id")
+    cached = _op_journal.get(op_id)
+    if cached is not None:
+        return done(*cached)
+    names = msg.get("names")
     if not isinstance(names, list) or not names:
         toast("Couldn't delete: no takes were chosen", "error")
-        return done(op, False)
+        return _finish_delete_many(op_id, op, False)
     deleted, failed = rec.delete_many(names)
     if failed and not deleted:
         toast("Couldn't delete them: %s" % failed[0][1], "error")
@@ -2019,7 +2089,7 @@ def client_rec_delete_many(msg):
               "error")
     else:
         toast("Deleted %d take%s" % (len(deleted), "" if len(deleted) == 1 else "s"), "ok")
-    done(op, not failed)
+    return _finish_delete_many(op_id, op, not failed)
 
 
 _services_started = False
