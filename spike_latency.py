@@ -64,8 +64,39 @@ def parse_jack_iodelay(output):
 try:
     from flask import Flask, Response
     from flask_socketio import SocketIO
+    HAVE_FLASK = True
 except ImportError:
-    sys.exit("needs flask and flask-socketio: pip install -r requirements.txt")
+    # Importing this module must not require flask: the tests, and anything
+    # that only wants the timing helpers, run on a stdlib-only interpreter.
+    # Only actually serving needs it, and main() refuses without it.
+    HAVE_FLASK = False
+
+    class _UnavailableFlask(object):
+        """Just enough of Flask's shape to survive the decorators below."""
+
+        def __init__(self, *args, **kwargs):
+            self.config = {}
+
+        def route(self, *args, **kwargs):
+            return lambda fn: fn
+
+    class SocketIO(object):
+        """Stands in for flask_socketio so the import cannot fail."""
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def on(self, *args, **kwargs):
+            return lambda fn: fn
+
+        def emit(self, *args, **kwargs):
+            pass
+
+        def run(self, *args, **kwargs):
+            sys.exit("needs flask and flask-socketio: pip install -r requirements.txt")
+
+    Flask = _UnavailableFlask
+    Response = None
 
 import jackutil
 
@@ -191,10 +222,60 @@ def on_disconnect():
         state["listeners"] = max(0, state["listeners"] - 1)
 
 
+PING2_TIMEOUT = 2.0               # seconds to wait for the peer's ack
+
+
+def ping2_timed_out(payload):
+    """Default error handler: an unanswered round trip must not be silent."""
+    print("ping2: no ack within %.1fs" % PING2_TIMEOUT, file=sys.stderr)
+
+
+def emit_ping2(sio, payload=None, timeout=PING2_TIMEOUT, on_timeout=None):
+    """
+    Emit "ping2" and cap the round trip.
+
+    socket.emit() with an ack callback waits for ever: a peer that stops
+    answering leaves the exchange hanging and nothing reports it. A timer
+    fires the error callback instead. An ack that does arrive cancels the
+    timer; one that arrives late is ignored rather than firing the error a
+    second time.
+    """
+    payload = {"t": now_ms(), **(payload or {})}
+    handler = on_timeout or ping2_timed_out
+    done = {"acked": False}
+    lock = threading.Lock()
+
+    def ack(reply=None):
+        with lock:
+            done["acked"] = True
+        timer.cancel()
+        return reply
+
+    def expire():
+        with lock:
+            if done["acked"]:
+                return
+            done["acked"] = True
+        handler(payload)
+
+    timer = threading.Timer(timeout, expire)
+    timer.daemon = True
+    timer.start()
+    sio.emit("ping2", payload, callback=ack)
+    return payload
+
+
 @socketio.on("ping2")
-def on_ping(msg):
-    """Round trip, so the page can line its clock up with ours."""
+def on_ping2(msg):
+    """
+    Round trip, so the page can line its clock up with ours.
+
+    The reply still goes back as the handler's return value; the emit is the
+    same exchange bounded by a timeout, so a peer that stops answering shows
+    up as an error callback instead of silence.
+    """
     client = msg.get("t") if isinstance(msg, dict) else None
+    emit_ping2(socketio, msg if isinstance(msg, dict) else {})
     return {"client": client, "server": now_ms()}
 
 
@@ -456,6 +537,8 @@ def socketio_js():
 
 
 def main():
+    if not HAVE_FLASK:
+        sys.exit("needs flask and flask-socketio: pip install -r requirements.txt")
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[3].strip())
     ap.add_argument("--fake", action="store_true", help="generate a tone instead of using JACK")
     ap.add_argument("--source", default="gx_head_amp", help="JACK client or port to tap")
