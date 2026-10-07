@@ -907,6 +907,43 @@ def _banks_map():
     return {b.get("name"): list(b.get("presets", [])) for b in rpc.banks()}
 
 
+def _preset_transaction(fn, verify, settle=3.0):
+    """
+    Run one preset mutation and report what the engine actually did.
+
+    The preset methods are notify-only: guitarix acts on them and sends
+    nothing back, so there's no reply to check. Instead the bank list is
+    read before and after, and the change is polled for until `settle`
+    seconds elapse.
+
+    Returns {"before", "after", "ok", "ambiguous"}:
+
+      ok         the verify predicate saw the change within the timeout
+      ambiguous  the poll failed AND the bank list is byte-for-byte what it
+                 was before the notify, so the engine never acted on it.
+                 That is the signature of a wrong method name, and it is
+                 reported differently from a change that landed but did not
+                 look the way the caller expected.
+    """
+    before = _banks_map()
+    fn()
+
+    ok = False
+    deadline = time.time() + settle
+    while time.time() < deadline:
+        socketio.sleep(0.25)
+        try:
+            if verify(_banks_map()):
+                ok = True
+                break
+        except (RpcError, OSError, TimeoutError):
+            continue
+
+    after = _banks_map()
+    return {"before": before, "after": after, "ok": ok,
+            "ambiguous": (not ok) and before == after}
+
+
 def _preset_action(fn, ok_message, verify=None, settle=3.0, fail_message=None,
                    op=None, after=None):
     """
@@ -919,7 +956,11 @@ def _preset_action(fn, ok_message, verify=None, settle=3.0, fail_message=None,
     """
     def run():
         try:
-            fn()
+            if verify is None:
+                fn()
+                result = {"ok": True, "ambiguous": False}
+            else:
+                result = _preset_transaction(fn, verify, settle)
         except RpcMethodMissing as exc:
             toast("No %r method is configured. Run probe_rpc.py." % str(exc), "error")
             done(op, False)
@@ -929,19 +970,7 @@ def _preset_action(fn, ok_message, verify=None, settle=3.0, fail_message=None,
             done(op, False)
             return
 
-        ok = True
-        if verify is not None:
-            ok = False
-            deadline = time.time() + settle
-            while time.time() < deadline:
-                socketio.sleep(0.25)
-                try:
-                    if verify(_banks_map()):
-                        ok = True
-                        break
-                except (RpcError, OSError, TimeoutError):
-                    continue
-
+        ok = result["ok"]
         if ok and after:
             try:
                 after()
@@ -950,6 +979,10 @@ def _preset_action(fn, ok_message, verify=None, settle=3.0, fail_message=None,
         refresh_banks()
         if ok:
             toast(ok_message, "ok")
+        elif result["ambiguous"]:
+            toast("The engine didn't act on that preset change, so the "
+                  "outcome is ambiguous. Check the method name in "
+                  "PRESET_METHODS.", "error")
         else:
             toast(fail_message or
                   "The engine didn't change anything. Check the method name "
