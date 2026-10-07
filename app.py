@@ -237,6 +237,52 @@ class StateCoordinator:
         return gen
 
 
+class StateCoordinator:
+    """Thread-safe registry for the state of every subsystem we track.
+
+    Each accepted update stores the new state and bumps a *monotonic*
+    generation counter, both under the same lock. The counter never goes
+    backwards and grows by exactly one per update, so a browser can compare
+    generations to tell "unchanged" from "changed" without diffing payloads.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._generation = 0
+        self._states = {}
+
+    def get_generation(self):
+        """The current generation. Starts at 0 and only ever increases."""
+        with self._lock:
+            return self._generation
+
+    def update(self, subsystem, state):
+        """Store *state* for *subsystem*, bump the generation, return it."""
+        with self._lock:
+            self._states[subsystem] = state
+            self._generation += 1
+            return self._generation
+
+    def get_state(self, subsystem, default=None):
+        """The last state stored for *subsystem* (or *default*)."""
+        with self._lock:
+            return self._states.get(subsystem, default)
+
+    def snapshot(self):
+        """One consistent ``(generation, {subsystem: state})`` view.
+
+        The generation and the copy of the states are read under the same
+        lock, so a reader can never see a half-applied update.
+        """
+        with self._lock:
+            return self._generation, dict(self._states)
+
+
+# Application entry point state: every browser-facing subsystem update goes
+# through this one coordinator, so generations stay monotonic process-wide.
+state_coordinator = StateCoordinator()
+
+
 class AmpState:
     """Everything the browsers need, kept in one place behind a lock."""
 
