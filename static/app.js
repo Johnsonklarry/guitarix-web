@@ -400,9 +400,20 @@ function renderPresets() {
 
 /* ------------------------------------------------------------------ knobs */
 
+/* One table of every parameter -> its view binding. Sliders, readouts,
+   switches and selects used to live in four maps that makeRange, buildDiscrete
+   and renderGroups each had to keep in step; a control is remembered here
+   once, so a re-render only has to forget it once. */
+const ControlRegistry = new Map();
+
+function bindControl(id, binding) {
+  ControlRegistry.set(id, binding);
+  return binding;
+}
+
 /* Rebuilding a container throws its controls away. Forget the ones inside it,
-   or the sliders/readouts/switches/selects maps keep the detached nodes (and
-   their listeners) alive, and a glide frame can keep running on a dead slider. */
+   or the maps keep the detached nodes (and their listeners) alive, and a
+   glide frame can keep running on a dead slider. */
 function releaseControls(into) {
   [sliders, readouts, switches, selects].forEach(function (map) {
     Object.keys(map).forEach(function (id) {
@@ -412,6 +423,10 @@ function releaseControls(into) {
       if (map === sliders) dragging.delete(id);
       delete map[id];
     });
+  });
+
+  ControlRegistry.forEach(function (binding, id) {
+    if (binding.el && into.contains(binding.el)) ControlRegistry.delete(id);
   });
 }
 
@@ -556,6 +571,7 @@ function makeRange(ctrl, valueEl) {
 
   sliders[ctrl.id] = input;
   readouts[ctrl.id] = valueEl;
+  bindControl(ctrl.id, { kind: 'range', el: input, readout: valueEl });
   valueEl.textContent = fmt(Number(ctrl.value));
   return input;
 }
@@ -729,6 +745,15 @@ function buildDiscrete(ctrl) {
       command(ctrl.id, value, 'discrete');
     });
     selects[ctrl.id] = sel;
+    bindControl(ctrl.id, {
+      kind: 'select',
+      el: sel,
+      apply: function (value, remote) {
+        const before = sel.value;
+        setChoice(sel, value);
+        if (remote && before !== sel.value) flash(sel, 'is-remote');
+      }
+    });
     field.appendChild(sel);
     return field;
   }
@@ -749,6 +774,15 @@ function buildDiscrete(ctrl) {
     command(ctrl.id, next, 'discrete');
   });
   switches[ctrl.id] = sw;
+  bindControl(ctrl.id, {
+    kind: 'switch',
+    el: sw,
+    apply: function (value, remote) {
+      const was = sw.classList.contains('is-on');
+      applyToggle(ctrl.id, value);
+      if (remote && was !== sw.classList.contains('is-on')) flash(sw, 'is-remote');
+    }
+  });
   applyToggle(ctrl.id, ctrl.value);
   return sw;
 }
@@ -757,20 +791,16 @@ function applyValues(values, remote) {
   Object.keys(values).forEach(function (id) {
     state.values[id] = values[id];
 
-    if (switches[id]) {
-      const was = switches[id].classList.contains('is-on');
-      applyToggle(id, values[id]);
-      if (remote && was !== switches[id].classList.contains('is-on')) flash(switches[id], 'is-remote');
-      return;
-    }
-    if (selects[id]) {
-      const before = selects[id].value;
-      setChoice(selects[id], values[id]);
-      if (remote && before !== selects[id].value) flash(selects[id], 'is-remote');
+    // One lookup decides who owns this parameter: a switch or a choice answers
+    // through its binding, and a fader keeps the path below, because it has to
+    // know whether the user is still holding it.
+    const bound = ControlRegistry.get(id);
+    if (bound && bound.kind !== 'range') {
+      bound.apply(values[id], remote);
       return;
     }
 
-    const input = sliders[id];
+    const input = bound ? bound.el : sliders[id];
     if (!input || dragging.has(id)) return;   // don't yank a knob mid-turn
 
     const out = readouts[id];
