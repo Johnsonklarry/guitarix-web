@@ -106,6 +106,39 @@ class DeltaSequencingTest(unittest.TestCase):
             self.accept,
             r'delta\.version\s*===\s*null\s*\)\s*return\s+delta\.values')
 
+    # ---- a version that can't be counted with: unnumbered, not a gap
+
+    def test_a_version_that_is_not_a_number_is_taken_as_unnumbered(self):
+        version = function_body(self.src, 'deltaVersion')
+        self.assertRegex(
+            version, r'return\s+isFinite\(\s*n\s*\)\s*\?\s*n\s*:\s*null',
+            'a version that is not a finite number has to come back as null')
+        split = function_body(self.src, 'splitDelta')
+        self.assertNotIn('Number(', split,
+                         'the raw Number() result can be NaN, which is neither '
+                         'behind us nor the version we are waiting for')
+        self.assertEqual(split.count('deltaVersion('), 2,
+                         'the envelope shape and the flat shape both carry a version')
+
+    # ---- a request that is never answered must not latch the page shut
+
+    def test_a_snapshot_request_that_is_never_answered_does_not_latch(self):
+        self.assertRegex(self.src, r'\blet\s+resyncTimer\b')
+        request = function_body(self.src, 'requestSnapshot')
+        self.assertRegex(request, r'setTimeout\(')
+        self.assertRegex(request, r'resyncing\s*=\s*false',
+                         'the flag has to come back down so a later gap asks again')
+        self.assertRegex(request, r'requestSnapshot\(',
+                         'and the ask itself is repeated before it gives up')
+
+    def test_a_snapshot_that_lands_puts_the_retry_away(self):
+        self.assertRegex(handler_body(self.src, 'snapshot'),
+                         r'clearTimeout\(\s*resyncTimer\s*\)')
+        self.assertRegex(handler_body(self.src, 'snapshot'),
+                         r'resyncRetries\s*=\s*0')
+        self.assertRegex(handler_body(self.src, 'connect'),
+                         r'clearTimeout\(\s*resyncTimer\s*\)')
+
     # ---- reconnect: where we are, and who decides a full sync is needed
 
     def test_connect_sends_the_last_known_version(self):

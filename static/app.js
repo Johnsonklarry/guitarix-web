@@ -56,6 +56,7 @@ let can = {};
 let state = { banks: [], bank: null, preset: null, values: {} };
 let stateVersion = 0;        // version of the state the page is showing
 let resyncing = false;       // a snapshot has been asked for and hasn't landed
+let resyncTimer = null;      // gives up on a snapshot request that never lands
 let online = false;          // engine reachable? read during the first render,
                              // so it has to be declared before applyLayout runs
 let linked = false;          // browser <-> web app socket up?
@@ -796,17 +797,28 @@ function buildDiscrete(ctrl) {
    steps further means an update went missing on the way here, and a gap can't
    be patched out of the messages that survived it -- so ask for the whole
    state instead of applying something that would be half right. */
+/* A version to count with, or null when the message doesn't carry one. A
+   version that isn't a finite number can't be placed in the sequence: as a
+   number it is neither behind us nor the one we're waiting for, so a malformed
+   message would look like a gap and ask for the whole state. It goes down the
+   unnumbered path with everything else instead. */
+function deltaVersion(v) {
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+
 function splitDelta(msg) {
   if (!msg) return { version: null, values: {} };
   // A delta arrives either as its parameters with a version beside them, or
-  // as a { version, values } envelope. Take both shapes.
-  if (msg.values && typeof msg.version === 'number') {
-    return { version: msg.version, values: msg.values };
+  // as a { version, values } envelope. Take both shapes -- and take the
+  // version through the same check whichever shape it comes in.
+  if (msg.values && typeof msg.values === 'object') {
+    return { version: deltaVersion(msg.version), values: msg.values };
   }
   const values = {};
   let version = null;
   Object.keys(msg).forEach(function (id) {
-    if (id === 'version') { version = Number(msg[id]); return; }
+    if (id === 'version') { version = deltaVersion(msg[id]); return; }
     values[id] = msg[id];
   });
   return { version: version, values: values };
@@ -827,12 +839,28 @@ function acceptDelta(msg) {
   return delta.values;
 }
 
+/* Long enough for a slow round trip, short enough that a request nobody
+   answered isn't sat on. */
+const RESYNC_TIMEOUT = 8000;
+
+let resyncRetries = 0;      // asks made since the last snapshot that landed
+
 /* One request at a time: the engine will hand over several more deltas before
-   the snapshot lands, and every one of them looks like another gap. */
+   the snapshot lands, and every one of them looks like another gap. An answer
+   that never comes -- a reply lost on the way, an engine with no snapshot to
+   give -- must not leave the flag up for good, or every later gap would be
+   dropped without asking again and the page would sit on values it can't
+   trust. Wait, let go, and ask once more; after that the next gap starts it
+   all again. */
 function requestSnapshot(reason) {
   if (resyncing) return;
   resyncing = true;
   socket.emit('request_snapshot', { version: stateVersion, reason: reason || '' });
+  clearTimeout(resyncTimer);
+  resyncTimer = setTimeout(function () {
+    resyncing = false;
+    if (resyncRetries++ < 2) requestSnapshot('nothing answered ' + (reason || ''));
+  }, RESYNC_TIMEOUT);
 }
 
 function applyValues(values, remote) {
@@ -2646,6 +2674,8 @@ function when(epoch) {
 socket.on('connect', function () {
   setLinked(true);
   resyncing = false;   // whatever we were waiting for died with the old socket
+  clearTimeout(resyncTimer);
+  resyncRetries = 0;
   // Say where we are: the engine replays the deltas we missed, or answers
   // 'resync' when our version is older than the history it still holds.
   socket.emit('sync', { version: stateVersion });
@@ -2675,6 +2705,8 @@ socket.on('snapshot', function (snap) {
   // answers the snapshot we asked for.
   stateVersion = Number(snap.version) || 0;
   resyncing = false;
+  clearTimeout(resyncTimer);   // it landed: nothing left to give up on
+  resyncRetries = 0;
   if (!selectedBank || !snap.banks.some(function (b) { return b.name === selectedBank; })) {
     selectedBank = snap.bank || (snap.banks[0] && snap.banks[0].name) || null;
   }
