@@ -54,8 +54,16 @@ class ImportSafetyTests(unittest.TestCase):
         saved = sys.modules.get("probe_rpc")
         self.addCleanup(lambda: sys.modules.__setitem__("probe_rpc", saved))
         sys.modules.pop("probe_rpc", None)
-        with mock.patch("socket.socket", side_effect=AssertionError("network used at import")):
+        # Patch the client class itself, not just socket.socket: a module-level
+        # GuitarixRPC(...) would otherwise connect from a background thread,
+        # where an AssertionError raised by the patched socket never reaches us.
+        with mock.patch.object(probe_rpc.gx_rpc, "GuitarixRPC",
+                               side_effect=AssertionError("RPC client built at import")) as rpc_cls, \
+                mock.patch("sys.exit") as exit_mock, \
+                mock.patch("socket.socket", side_effect=AssertionError("network used at import")):
             module = importlib.import_module("probe_rpc")
+        rpc_cls.assert_not_called()
+        exit_mock.assert_not_called()
         self.assertTrue(callable(getattr(module, "main", None)))
         self.assertTrue(callable(getattr(module, "classify", None)))
 
