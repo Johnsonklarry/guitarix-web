@@ -135,7 +135,10 @@ _socketio_emit = socketio.emit
 
 
 def _broadcast_guarded_emit(event, data=None, *a, **kw):
-    if BROADCAST:
+    # An emit carrying to=<sid> is a private reply, not a fan-out broadcast:
+    # op_done reaches the browser that started the operation that way, so let
+    # it through untouched instead of dropping it with the rest.
+    if BROADCAST and not kw.get("to"):
         if event not in BROADCAST_EMITS:
             return
         if event == "snapshot":
