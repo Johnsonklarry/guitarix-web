@@ -11,7 +11,9 @@ def parse_systemd_unit(path):
 
     Directives are stored under the section they appear in. Lines that are
     blank, comments, or section headers are handled; a directive repeated in
-    the same section keeps the last value seen.
+    the same section keeps the last value seen. This works for any unit file,
+    including guitarix-web.service, guitarix-demo.service and
+    guitarix-connect.service.
     """
     sections = {}
     current = None
@@ -75,6 +77,90 @@ class ServiceFileTests(unittest.TestCase):
                 "web=%r demo=%r"
                 % (key, web_service.get(key), demo_service.get(key)),
             )
+
+    def test_demo_service_deployed_spec(self):
+        demo_path = _unit_path("guitarix-demo.service")
+        demo = parse_systemd_unit(demo_path)
+
+        self.assertEqual(
+            sorted(demo),
+            ["Install", "Service", "Unit"],
+            "guitarix-demo.service must define exactly the [Unit], [Service] "
+            "and [Install] sections; got %r" % (sorted(demo),),
+        )
+
+        unit = demo["Unit"]
+        service = demo["Service"]
+        install = demo["Install"]
+
+        self.assertEqual(
+            unit.get("Description"),
+            "Guitarix demo web interface",
+            "guitarix-demo.service [Unit] Description mismatch: %r"
+            % (unit.get("Description"),),
+        )
+        self.assertEqual(
+            unit.get("After"),
+            "network.target sound.target guitarix-jack.service",
+            "guitarix-demo.service [Unit] After mismatch: %r"
+            % (unit.get("After"),),
+        )
+        self.assertEqual(
+            unit.get("Wants"),
+            "guitarix-jack.service",
+            "guitarix-demo.service [Unit] Wants mismatch: %r"
+            % (unit.get("Wants"),),
+        )
+
+        self.assertEqual(
+            service.get("Type"),
+            "simple",
+            "guitarix-demo.service [Service] Type mismatch: %r"
+            % (service.get("Type"),),
+        )
+        self.assertEqual(
+            service.get("User"),
+            "guitarix",
+            "guitarix-demo.service [Service] User mismatch: %r"
+            % (service.get("User"),),
+        )
+        self.assertEqual(
+            service.get("Group"),
+            "guitarix",
+            "guitarix-demo.service [Service] Group mismatch: %r"
+            % (service.get("Group"),),
+        )
+        self.assertEqual(
+            service.get("WorkingDirectory"),
+            "/opt/guitarix",
+            "guitarix-demo.service [Service] WorkingDirectory mismatch: %r"
+            % (service.get("WorkingDirectory"),),
+        )
+        self.assertEqual(
+            service.get("ExecStart"),
+            "/opt/guitarix/venv/bin/python -m guitarix.web --demo",
+            "guitarix-demo.service [Service] ExecStart mismatch: %r"
+            % (service.get("ExecStart"),),
+        )
+        self.assertEqual(
+            service.get("Restart"),
+            "on-failure",
+            "guitarix-demo.service [Service] Restart mismatch: %r"
+            % (service.get("Restart"),),
+        )
+        self.assertEqual(
+            service.get("Environment"),
+            "GUITARIX_DEMO=1",
+            "guitarix-demo.service [Service] Environment mismatch: %r"
+            % (service.get("Environment"),),
+        )
+
+        self.assertEqual(
+            install.get("WantedBy"),
+            "multi-user.target",
+            "guitarix-demo.service [Install] WantedBy mismatch: %r"
+            % (install.get("WantedBy"),),
+        )
 
 
 def main():
