@@ -137,7 +137,10 @@ class FakeJackFaultTest(unittest.TestCase):
     def test_malformed_faults_file_fails_loudly(self):
         with open(os.path.join(self.dir, 'faults.json'), 'w') as f:
             f.write('{not json')
-        with self.assertRaises(SystemExit):
+        # Assert on the message, not just the type: an unrelated SystemExit
+        # (say, FAKE_JACK_DIR unset) must not make this test pass.
+        with self.assertRaisesRegex(SystemExit,
+                                    'faults.json is not valid JSON'):
             fakejack.connect('system:capture_1', 'gx_head_fx:in_0')
 
 
