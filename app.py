@@ -740,13 +740,35 @@ def api_state():
     return jsonify(state.snapshot())
 
 
+def _confined(root, name, must_exist=True):
+    """
+    The one place where a name from a URL or an upload becomes a path.
+
+    Returns the absolute path only when the name is a plain file name that
+    lands directly inside root. A name carrying a directory part or a ".."
+    is refused, so no caller ever joins a request straight into the
+    filesystem. Uploads pass must_exist=False: they name the file they are
+    about to write, which is not there yet.
+    """
+    root = os.path.abspath(root)
+    name = (name or "").replace("\\", "/")
+    if not name or ".." in name.split("/"):
+        return None
+    path = os.path.abspath(os.path.join(root, os.path.basename(name)))
+    if os.path.dirname(path) != root:
+        return None
+    if must_exist and not os.path.isfile(path):
+        return None
+    return path
+
+
 @app.route("/recordings/<path:name>")
 def recording_file(name):
     """Serves a take for the <audio> element, or as a download with ?dl=1."""
-    safe = os.path.basename(name)
-    if not os.path.isfile(os.path.join(rec.dir, safe)):
+    path = _confined(rec.dir, name)
+    if path is None:
         abort(404)
-    return send_from_directory(rec.dir, safe,
+    return send_from_directory(os.path.dirname(path), os.path.basename(path),
                                as_attachment=bool(request.args.get("dl")),
                                conditional=True)
 
@@ -788,6 +810,9 @@ def backing_upload():
     saved = []
     try:
         for f in files:
+            if _confined(backing.dir, f.filename, must_exist=False) is None:
+                return jsonify({"ok": False, "error": "That file name leaves the backing folder.",
+                                "saved": saved}), 400
             saved.append(backing.save_upload(f.filename, f.stream))
     except (BackingError, OSError) as exc:
         return jsonify({"ok": False, "error": str(exc), "saved": saved}), 400
@@ -796,10 +821,11 @@ def backing_upload():
 
 @app.route("/backing/<path:name>")
 def backing_file(name):
-    safe = os.path.basename(name)
-    if not os.path.isfile(os.path.join(backing.dir, safe)):
+    path = _confined(backing.dir, name)
+    if path is None:
         abort(404)
-    return send_from_directory(backing.dir, safe, conditional=True)
+    return send_from_directory(os.path.dirname(path), os.path.basename(path),
+                               conditional=True)
 
 
 @app.route("/api/parameters")
