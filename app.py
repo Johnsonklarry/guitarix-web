@@ -443,37 +443,71 @@ _done_journal = {}
 _done_journal_lock = threading.Lock()
 
 
+def _journal_get(op_id):
+    """Caller holds _done_journal_lock. The cached (op, ok), or None."""
+    entry = _done_journal.get(op_id)
+    if entry is None:
+        return None
+    cached_op, cached_ok, recorded = entry
+    if DONE_JOURNAL_TTL and time.time() - recorded > DONE_JOURNAL_TTL:
+        del _done_journal[op_id]
+        return None
+    return cached_op, cached_ok
+
+
+def _journal_put(op_id, op, ok):
+    """Caller holds _done_journal_lock. Store the result, then drop the oldest
+    entries until the journal is back inside its bound."""
+    _done_journal[op_id] = (op, bool(ok), time.time())
+    while DONE_JOURNAL_MAX and len(_done_journal) > DONE_JOURNAL_MAX:
+        _done_journal.pop(next(iter(_done_journal)))
+
+
 def done_journal_lookup(op_id):
     """The cached (op, ok) recorded for `op_id`, or None if unknown or expired."""
     if not op_id:
         return None
     with _done_journal_lock:
-        entry = _done_journal.get(op_id)
-        if entry is None:
-            return None
-        cached_op, cached_ok, recorded = entry
-        if DONE_JOURNAL_TTL and time.time() - recorded > DONE_JOURNAL_TTL:
-            del _done_journal[op_id]
-            return None
-        return cached_op, cached_ok
+        return _journal_get(op_id)
 
 
 def done_journal_record(op_id, op, ok):
     """Remember `op_id`, dropping the oldest entries once the bound is exceeded."""
     with _done_journal_lock:
-        _done_journal[op_id] = (op, bool(ok), time.time())
-        while DONE_JOURNAL_MAX and len(_done_journal) > DONE_JOURNAL_MAX:
-            _done_journal.pop(next(iter(_done_journal)))
+        _journal_put(op_id, op, ok)
+
+
+def done_journal_claim(op_id, op, ok):
+    """
+    Look `op_id` up and, when it is not already known, record `op`/`ok` for it
+    -- both under one lock acquisition, so two calls racing on the same id
+    cannot both miss and both record.
+
+    Returns the recorded (op, ok) when the id already belongs to that
+    operation (a duplicate request: replay it), or None when this call was the
+    first for the id and has now recorded it. An id journaled for a DIFFERENT
+    operation is not a retry of this one, so it is reported -- and recorded --
+    in its own right rather than answered with the other operation's result.
+    """
+    if not op_id:
+        return None
+    with _done_journal_lock:
+        cached = _journal_get(op_id)
+        if cached is not None and cached[0] == op:
+            return cached
+        _journal_put(op_id, op, ok)
+        return None
 
 
 def done(op, ok, op_id=None):
     """Tell the browser that started `op` it has finished, so its button settles."""
     if op:
-        cached = done_journal_lookup(op_id)
+        # One atomic lookup-or-record: a duplicate is replayed from the
+        # journal, a first (or a reused id belonging to another operation) is
+        # reported and recorded as itself.
+        cached = done_journal_claim(op_id, op, ok)
         if cached is not None:        # duplicate request: replay what we sent
             op, ok = cached
-        elif op_id:
-            done_journal_record(op_id, op, ok)
         payload = {"op": op, "ok": bool(ok)}
         sid = _requester()
         if sid:

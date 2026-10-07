@@ -1,9 +1,11 @@
 """Regression tests for issue #12601: the in-memory operation journal in `done`.
 
 `done()` may be handed a durable operation id. The first call records the
-result; a repeat call with the same id replays the recorded result rather than
-reporting the freshly supplied one. The journal is bounded by a maximum number
-of entries and by a TTL, after which the id is forgotten and processed again.
+result; a repeat call with the same id AND the same operation replays the
+recorded result rather than reporting the freshly supplied one -- an id that
+turns up attached to a different operation is not a retry, and is reported in
+its own right. The journal is bounded by a maximum number of entries and by a
+TTL, after which the id is forgotten and processed again.
 
 `app` needs flask / flask-socketio to run. Where those packages are missing --
 this suite is stdlib-only -- permissive stand-ins are registered in sys.modules
@@ -15,6 +17,7 @@ import importlib
 import importlib.util
 import os
 import sys
+import threading
 import time
 import types
 import unittest
@@ -134,14 +137,26 @@ class DoneJournalTest(unittest.TestCase):
     def test_duplicate_operation_replays_the_cached_result(self):
         app.done("delete", True, op_id="op-2")
         recorded = app._done_journal["op-2"]
-        # A second request with the same id must not re-run the operation: the
-        # original result comes back even though different arguments arrive.
-        app.done("something-else", False, op_id="op-2")
+        # A retry of the same operation carries the same id and the same op:
+        # the original result comes back and the entry is left alone.
+        app.done("delete", True, op_id="op-2")
         self.assertEqual(self.recorder.payloads(),
                          [{"op": "delete", "ok": True},
                           {"op": "delete", "ok": True}])
         self.assertEqual(len(app._done_journal), 1)
         self.assertEqual(app._done_journal["op-2"], recorded)
+
+    def test_id_reused_for_a_different_operation_is_not_a_retry(self):
+        app.done("delete", True, op_id="op-2")
+        # Same id, different operation. The cached result belongs to another
+        # operation, so this one must be reported -- and recorded -- as
+        # itself, not answered with delete's outcome.
+        app.done("invalid", False, op_id="op-2")
+        self.assertEqual(self.recorder.payloads(),
+                         [{"op": "delete", "ok": True},
+                          {"op": "invalid", "ok": False}])
+        self.assertEqual(len(app._done_journal), 1)
+        self.assertEqual(app._done_journal["op-2"][:2], ("invalid", False))
 
     def test_operation_without_id_is_not_journaled(self):
         app.done("invalid", False)
@@ -177,6 +192,45 @@ class DoneJournalTest(unittest.TestCase):
 
     def test_journal_ttl_is_one_day(self):
         self.assertEqual(app.DONE_JOURNAL_TTL, 24 * 60 * 60)
+
+    def test_claim_looks_up_and_records_in_one_step(self):
+        # Unknown id: this call does the recording and says so.
+        self.assertIsNone(app.done_journal_claim("op-4", "delete", True))
+        self.assertEqual(app._done_journal["op-4"][:2], ("delete", True))
+        # Known id for the same operation: it is a duplicate, replay it.
+        self.assertEqual(app.done_journal_claim("op-4", "delete", False),
+                         ("delete", True))
+        self.assertEqual(len(app._done_journal), 1)
+
+    def test_racing_duplicates_record_once_only(self):
+        workers = 8
+        start = threading.Barrier(workers)
+        collected = threading.Lock()
+        outcomes = []
+
+        def worker(index):
+            start.wait()             # all of them hit the journal together
+            outcome = app.done_journal_claim("op-race", "delete", index % 2 == 0)
+            with collected:
+                outcomes.append(outcome)
+
+        threads = [threading.Thread(target=worker, args=(i,))
+                   for i in range(workers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        # Exactly one caller found the id unknown -- it did the recording --
+        # and every other one was handed that same recorded result, so the
+        # journal holds one entry and every client sees one answer.
+        self.assertEqual(len(outcomes), workers)
+        self.assertEqual([o for o in outcomes if o is None], [None])
+        replayed = [o for o in outcomes if o is not None]
+        self.assertEqual(len(replayed), workers - 1)
+        self.assertTrue(all(entry == replayed[0] for entry in replayed))
+        self.assertEqual(len(app._done_journal), 1)
+        self.assertEqual(app._done_journal["op-race"][:2], replayed[0])
 
 
 if __name__ == "__main__":
