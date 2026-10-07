@@ -87,6 +87,12 @@ KILL_TIMEOUT = 3
 # writing anyway; the engine may buffer a moment before the first byte lands.
 WRITER_TIMEOUT = 1.0
 
+# Exit codes that mean the engine stopped the way it was meant to: a clean
+# shutdown, or the interrupt stop() sends it. Anything else is a crash, and a
+# take whose engine crashed is never published -- however fast the watcher
+# thread gets to it.
+EXPECTED_EXIT_CODES = (0, -signal.SIGINT, 255)
+
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
@@ -127,8 +133,13 @@ class Recorder:
         self._dry_wiring = None
         self._state = None           # where the current take is, see STATES
         self._sidecar = None         # the take's settings file, if it has one
+        self._stopping = False       # stop() asked the engine to go away
         self._lock = threading.Lock()
-        self._state_lock = threading.Lock()
+        # re-entrant on purpose: _advance holds it while it asks _set_state to
+        # move the take, so the look and the move can't be split by another
+        # thread walking the state machine at the same time
+        self._state_lock = threading.RLock()
+        self._error_lock = threading.Lock()
         self._durations = {}          # path -> (mtime, seconds)
 
     # ------------------------------------------------------------ status
@@ -162,10 +173,33 @@ class Recorder:
             log.debug("take state: %s", state)
             self._state = state
 
+    def _advance(self, from_state, to_state):
+        """
+        Move the take along only if it is still where the caller last saw it,
+        the look and the move under one lock. A wiring thread still waiting on
+        the writer when stop() landed would otherwise drag the take back from
+        finalizing to writing.
+        """
+        with self._state_lock:
+            if self._state != from_state:
+                return False
+            self._set_state(to_state)
+            return True
+
+    def _remember_error(self, message):
+        """
+        Keep the first thing that went wrong with a take. Two threads can
+        report a fault at the same moment -- the wiring thread and the watcher
+        -- and the first one, the one that got there while the take was still
+        fixable, is the one worth keeping.
+        """
+        with self._error_lock:
+            if self._error is None:
+                self._error = message
+
     def _fail(self, message, state=STATE_ERROR):
         """Park the take where listing() won't publish it, and say why."""
-        if self._error is None:
-            self._error = message
+        self._remember_error(message)
         self._set_state(state)
         log.error("take failed: %s", message)
 
@@ -209,6 +243,7 @@ class Recorder:
             self._wiring = None
             self._dry_wiring = None
             self._sidecar = None
+            self._stopping = False      # this take's exit is not ours yet
             self._set_state(STATE_STARTING, force=True)
             log.info("recording to %s", path)
             try:
@@ -261,17 +296,26 @@ class Recorder:
     def stop(self):
         with self._lock:
             proc, dry_proc = self._proc, self._dry_proc
-            if proc is None or proc.poll() is not None:
-                return self.status()
-            log.info("stopping recording")
-            self._set_state(STATE_FINALIZING)
-            for p in (proc, dry_proc):
-                if p is None:
-                    continue
-                try:
-                    p.send_signal(signal.SIGINT)      # lets ffmpeg close the header
-                except OSError:
-                    pass
+            running = proc is not None and proc.poll() is None
+            if running:
+                log.info("stopping recording")
+                self._stopping = True      # this exit is ours, not a crash
+                self._set_state(STATE_FINALIZING)
+                for p in (proc, dry_proc):
+                    if p is None:
+                        continue
+                    try:
+                        p.send_signal(signal.SIGINT)      # lets ffmpeg close the header
+                    except OSError:
+                        pass
+
+        if not running:
+            # Nothing to signal: either no take ever started, or the engine
+            # went away before anyone asked it to. Either way the take still
+            # needs an answer -- one left mid-flight is a take nobody sees.
+            if self._resolve_orphan():
+                self.on_change()
+            return self.status()
 
         stalled = False
         for p in (proc, dry_proc):
@@ -300,11 +344,17 @@ class Recorder:
         """Notice a crash (bad ffmpeg build, JACK gone) and surface the reason."""
         _, err = proc.communicate()
         code = proc.returncode
-        # SIGINT is how we ask it to stop, so that exit is expected
-        if error_attr and code not in (0, -signal.SIGINT, 255) and getattr(self, error_attr) is None:
+        # An exit stop() asked for is expected whatever code the engine chose
+        # to leave with: the take is being finalised on purpose, and racing
+        # that decision on the exit status would fail a whole take whenever
+        # the watcher happened to get to the state machine first.
+        asked = proc is self._proc and self._stopping
+        if error_attr and not asked and code not in EXPECTED_EXIT_CODES \
+                and getattr(self, error_attr) is None:
             tail = (err or b"").decode("utf-8", "replace").strip().splitlines()
-            setattr(self, error_attr, tail[-1] if tail else ("ffmpeg exited with %s" % code))
-            log.error("ffmpeg: %s", getattr(self, error_attr))
+            message = tail[-1] if tail else ("ffmpeg exited with %s" % code)
+            self._remember_error(message)
+            log.error("ffmpeg: %s", message)
             if proc is self._proc:
                 self._set_state(STATE_ERROR)     # a dead engine is not a take
         if proc is self._proc:
@@ -374,7 +424,8 @@ class Recorder:
         wait past WRITER_TIMEOUT, and never override a take that has already
         been stopped or has failed underneath us.
         """
-        self._set_state(STATE_WIRED)
+        if not self._advance(STATE_STARTING, STATE_WIRED):
+            return                         # stopped or failed while we were out
         deadline = time.time() + WRITER_TIMEOUT
         while time.time() < deadline:
             proc = self._proc
@@ -383,8 +434,7 @@ class Recorder:
             if self._path and os.path.exists(self._path):
                 break
             time.sleep(0.05)
-        if self._state == STATE_WIRED:
-            self._set_state(STATE_WRITING)
+        self._advance(STATE_WIRED, STATE_WRITING)
 
     def _finish(self):
         """
@@ -400,6 +450,29 @@ class Recorder:
             self._fail("the settings sidecar for %s wasn't written" % name)
             return
         self._set_state(STATE_READY)
+
+    def _resolve_orphan(self):
+        """
+        A take whose engine is already gone when stop() is called -- it
+        crashed, or something outside the app signalled it -- still needs a
+        verdict. Its state is what listing() consults, so a take left at
+        "writing" is one nobody ever sees, with no error anywhere to explain
+        it. A take that already reached a terminal state keeps it; otherwise
+        the engine's exit code decides, and a clean exit that left a whole
+        file behind is published like any other stop.
+
+        Returns True if this moved the take.
+        """
+        state = self._state
+        if state is None or state in TERMINAL_STATES:
+            return False
+        proc = self._proc
+        code = proc.returncode if proc is not None else None
+        if code is not None and code not in EXPECTED_EXIT_CODES:
+            self._fail("the engine stopped on its own (exit %s); the take wasn't published" % code)
+        else:
+            self._finish()
+        return self._state != state
 
     # ------------------------------------------------------------ library
 

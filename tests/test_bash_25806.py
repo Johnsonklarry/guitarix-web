@@ -51,7 +51,7 @@ class FakeProc:
         self.signals.append(sig)
         self.engine.log.append("signal %s: %s" % (sig, os.path.basename(self.path)))
         if not self.engine.stall:
-            self._exit(0)
+            self._exit(self.engine.stop_code)
 
     def kill(self):
         self.engine.log.append("kill: %s" % os.path.basename(self.path))
@@ -79,13 +79,15 @@ class FakeEngine:
     """Builds fake engine processes and keeps a log of the faults injected
     into them, so a test can check the fault was observable."""
 
-    def __init__(self, create_file=True, crash_code=None, stall=False, stderr=b""):
+    def __init__(self, create_file=True, crash_code=None, stall=False, stderr=b"",
+                 stop_code=0):
         self.procs = []
         self.log = []
         self.create_file = create_file
         self.crash_code = crash_code
         self.stall = stall
         self.stderr = stderr
+        self.stop_code = stop_code       # what it exits with when signalled
         self.release_event = threading.Event()
 
     def __call__(self, args, **kwargs):
@@ -257,8 +259,8 @@ class RecorderStateTest(unittest.TestCase):
             elapsed = time.time() - began
 
         self.assertLess(elapsed, 2.0)
-        self.assertNotEqual(recorder.STATE_READY, status["state"])
-        self.assertIn(status["state"], (recorder.STATE_ERROR, recorder.STATE_FINALIZING))
+        self.assertEqual(recorder.STATE_ERROR, status["state"])
+        self.assertIn("didn't stop cleanly", status["error"] or "")
         self.assertTrue(engine.log)       # the stall and the kill were seen
         self.assertTrue(os.path.isfile(os.path.join(self.dir, "Stalled.wav")))
         self.assertEqual([], rec.listing())
@@ -303,6 +305,100 @@ class RecorderStateTest(unittest.TestCase):
             self.assertEqual(recorder.STATE_STARTING, again.state)
             self.assertIn("Kept.wav", self.names(again))
             self.assertNotIn("In flight.wav", self.names(again))
+
+    def test_a_take_whose_engine_stopped_early_is_still_resolved(self):
+        engine = FakeEngine()
+        jack = FakeJack()
+        rec = self.make_recorder(engine, jack)
+
+        rec.start(name="Orphan")
+        self.assertTrue(self.wait_for(lambda: rec.state == recorder.STATE_WRITING),
+                        "take never reached writing: %s" % rec.state)
+
+        # something outside the app signals the engine: ffmpeg closes the WAV
+        # header and goes, and nothing tells the recorder. Until stop() is
+        # called the take is neither ready nor failed, so listing() hides it.
+        rec._proc.send_signal(signal.SIGINT)
+        self.assertTrue(self.wait_for(lambda: rec._proc.poll() is not None))
+        self.assertEqual([], rec.listing())
+
+        status = rec.stop()
+        self.assertEqual(recorder.STATE_READY, status["state"])
+        self.assertIsNone(status["error"])
+        self.assertEqual(["Orphan.wav"], self.names(rec))
+
+    def test_a_crashed_take_stays_failed_when_stop_is_called_afterwards(self):
+        engine = FakeEngine(crash_code=1, stderr=b"jack: the amp vanished")
+        jack = FakeJack()
+        rec = self.make_recorder(engine, jack)
+
+        rec.start(name="Crashed later")
+        self.assertTrue(self.wait_for(lambda: rec.state == recorder.STATE_ERROR),
+                        "take never failed: %s" % rec.state)
+
+        # resolving an orphaned take must not publish one the engine crashed on
+        status = rec.stop()
+        self.assertEqual(recorder.STATE_ERROR, status["state"])
+        self.assertIn("vanished", status["error"] or "")
+        self.assertEqual([], rec.listing())
+
+    def test_a_take_we_stopped_survives_an_odd_exit_code(self):
+        engine = FakeEngine(stop_code=1)   # the engine leaves with an odd code
+        jack = FakeJack()
+        rec = self.make_recorder(engine, jack)
+
+        rec.start(name="Odd")
+        self.assertTrue(self.wait_for(lambda: rec.state == recorder.STATE_WRITING),
+                        "take never reached writing: %s" % rec.state)
+
+        status = rec.stop()
+        self.assertEqual(recorder.STATE_READY, status["state"])
+        self.assertIsNone(status["error"])
+        self.assertEqual(["Odd.wav"], self.names(rec))
+
+    def test_wiring_that_finishes_after_a_stop_does_not_drag_the_take_back(self):
+        engine = FakeEngine()
+        jack = FakeJack()
+        rec = self.make_recorder(engine, jack)
+
+        rec.start(name="Backwards")
+        self.assertTrue(self.wait_for(lambda: rec.state == recorder.STATE_WRITING),
+                        "take never reached writing: %s" % rec.state)
+
+        # stop() moves the take to finalizing; a wiring thread still sitting in
+        # its writer wait must not put it back on writing
+        rec._set_state(recorder.STATE_FINALIZING)
+        rec._wired()
+        self.assertEqual(recorder.STATE_FINALIZING, rec.state)
+
+    def test_a_late_fault_does_not_replace_the_first_one(self):
+        engine = FakeEngine()
+        jack = FakeJack()
+        rec = self.make_recorder(engine, jack)
+
+        rec._fail("the wiring couldn't reach the amp")
+
+        # the losing half of the race: it gets as far as the error field while
+        # the winner is inside the same step, so it has to wait its turn
+        entered = threading.Event()
+
+        def complain():
+            entered.set()
+            rec._fail("ffmpeg exited with 1")
+
+        late = threading.Thread(target=complain)
+        rec._error_lock.acquire()
+        try:
+            late.start()
+            self.assertTrue(entered.wait(2), "the second fault never ran")
+            time.sleep(0.1)
+            self.assertTrue(late.is_alive(), "two faults wrote the error field at once")
+        finally:
+            rec._error_lock.release()
+        late.join(5)
+
+        self.assertEqual(recorder.STATE_ERROR, rec.state)
+        self.assertEqual("the wiring couldn't reach the amp", rec.status()["error"])
 
 
 if __name__ == "__main__":
