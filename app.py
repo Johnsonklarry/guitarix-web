@@ -433,9 +433,47 @@ def _export_request_cancel():
         return True
 
 
-def done(op, ok):
+# Finished operations land here so a duplicate request -- one carrying the same
+# durable operation id -- replays the original result instead of doing the work
+# twice. The journal is bounded in size and in age: a retry that arrives after
+# the TTL is treated as a brand new request.
+DONE_JOURNAL_MAX = 1024
+DONE_JOURNAL_TTL = 24 * 60 * 60
+_done_journal = {}
+_done_journal_lock = threading.Lock()
+
+
+def done_journal_lookup(op_id):
+    """The cached (op, ok) recorded for `op_id`, or None if unknown or expired."""
+    if not op_id:
+        return None
+    with _done_journal_lock:
+        entry = _done_journal.get(op_id)
+        if entry is None:
+            return None
+        cached_op, cached_ok, recorded = entry
+        if DONE_JOURNAL_TTL and time.time() - recorded > DONE_JOURNAL_TTL:
+            del _done_journal[op_id]
+            return None
+        return cached_op, cached_ok
+
+
+def done_journal_record(op_id, op, ok):
+    """Remember `op_id`, dropping the oldest entries once the bound is exceeded."""
+    with _done_journal_lock:
+        _done_journal[op_id] = (op, bool(ok), time.time())
+        while DONE_JOURNAL_MAX and len(_done_journal) > DONE_JOURNAL_MAX:
+            _done_journal.pop(next(iter(_done_journal)))
+
+
+def done(op, ok, op_id=None):
     """Tell the browser that started `op` it has finished, so its button settles."""
     if op:
+        cached = done_journal_lookup(op_id)
+        if cached is not None:        # duplicate request: replay what we sent
+            op, ok = cached
+        elif op_id:
+            done_journal_record(op_id, op, ok)
         payload = {"op": op, "ok": bool(ok)}
         sid = _requester()
         if sid:
