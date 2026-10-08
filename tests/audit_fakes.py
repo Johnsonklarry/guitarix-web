@@ -11,9 +11,13 @@ def parse_systemd_unit(path):
 
     Directives are stored under the section they appear in. Lines that are
     blank, comments, or section headers are handled; a directive repeated in
-    the same section keeps the last value seen. This works for any unit file,
-    including guitarix-web.service, guitarix-demo.service and
-    guitarix-connect.service.
+    the same section keeps the last value seen.
+
+    This handles the simple key=value unit files used in this repo
+    (guitarix-web.service, guitarix-demo.service, guitarix-connect.service).
+    It does not implement systemd line continuations (a trailing backslash) or
+    additive directives that legitimately repeat, such as multiple
+    Environment= lines, so it is not a general systemd unit parser.
     """
     sections = {}
     current = None
@@ -36,6 +40,29 @@ def parse_systemd_unit(path):
                 sections.setdefault(current, {})
             sections[current][key] = value
     return sections
+
+
+SHARED_SERVICE_KEYS = ("User", "Group", "WorkingDirectory", "Restart")
+
+
+def assert_shared_service_keys_match(testcase, web, demo,
+                                     keys=SHARED_SERVICE_KEYS):
+    """Assert two parsed units agree on every key they share in [Service].
+
+    Uses testcase.assertEqual so a disagreement surfaces as a normal unittest
+    AssertionError naming the offending key and both values. Returns without
+    raising when every key matches.
+    """
+    web_service = web.get("Service", {})
+    demo_service = demo.get("Service", {})
+    for key in keys:
+        testcase.assertEqual(
+            web_service.get(key),
+            demo_service.get(key),
+            "guitarix-web.service and guitarix-demo.service disagree on %r: "
+            "web=%r demo=%r"
+            % (key, web_service.get(key), demo_service.get(key)),
+        )
 
 
 def _unit_path(name):
@@ -63,20 +90,15 @@ class ServiceFileTests(unittest.TestCase):
                 % (key, sorted(web_service)),
             )
 
-        for key in ("User", "Group", "WorkingDirectory", "Restart"):
+        for key in SHARED_SERVICE_KEYS:
             self.assertIn(
                 key,
                 demo_service,
                 "guitarix-demo.service [Service] is missing required key %r; got %r"
                 % (key, sorted(demo_service)),
             )
-            self.assertEqual(
-                web_service.get(key),
-                demo_service.get(key),
-                "guitarix-web.service and guitarix-demo.service disagree on %r: "
-                "web=%r demo=%r"
-                % (key, web_service.get(key), demo_service.get(key)),
-            )
+
+        assert_shared_service_keys_match(self, web, demo)
 
     def test_demo_service_deployed_spec(self):
         demo_path = _unit_path("guitarix-demo.service")

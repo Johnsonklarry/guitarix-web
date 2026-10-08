@@ -2,7 +2,10 @@ import os
 import tempfile
 import unittest
 
-from tests.audit_fakes import parse_systemd_unit
+from tests.audit_fakes import (
+    assert_shared_service_keys_match,
+    parse_systemd_unit,
+)
 
 
 DEMO_UNIT = """\
@@ -170,14 +173,8 @@ class ParseSystemdUnitTests(unittest.TestCase):
             demo = parse_systemd_unit(demo_path)
 
         with self.assertRaises(AssertionError) as ctx:
-            self.assertEqual(
-                web["Service"].get("Restart"),
-                demo["Service"].get("Restart"),
-                "guitarix-web.service and guitarix-demo.service disagree on "
-                "'Restart': web=%r demo=%r"
-                % (web["Service"].get("Restart"),
-                   demo["Service"].get("Restart")),
-            )
+            assert_shared_service_keys_match(self, web, demo)
+
         message = str(ctx.exception)
         self.assertIn("Restart", message)
         self.assertIn("always", message)
