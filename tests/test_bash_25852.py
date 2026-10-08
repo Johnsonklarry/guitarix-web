@@ -5,8 +5,8 @@ The fake Guitarix engine gains opt-in fault injection driven by the
 
 * ``stall_set`` / ``stall_setpreset`` make the matching notification branch
   sleep 0.2s before applying its values.
-* ``crash_on`` names a method whose branch calls ``os._exit(1)`` right after
-  applying its values.
+* ``crash_on`` names a method whose branch flushes pending output and calls
+  ``os._exit(1)`` right after applying its values.
 
 The tests drive ``FakeEngine._process_request`` directly, so they assert the
 engine's observable behaviour (elapsed time, resulting values, process exit
@@ -20,12 +20,11 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest import mock
 
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ENGINE_PATH = os.path.join(_HERE, 'fakes', 'engine.py')
-
-_STALL_SECONDS = 0.2
 
 
 def _load_engine_module():
@@ -37,6 +36,10 @@ def _load_engine_module():
 
 
 engine_mod = _load_engine_module()
+
+# Read from the engine itself so the stall duration cannot drift between the
+# engine and these tests.
+_STALL_SECONDS = engine_mod.STALL_SECONDS
 
 
 class _FakeSocket:
@@ -123,11 +126,13 @@ class FakeEngineFaultInjectionTests(unittest.TestCase):
         sock = _FakeSocket()
         line = _set_request('amp.fuzz', 0.31)
 
-        start = time.monotonic()
-        engine._process_request(sock, line)
-        elapsed = time.monotonic() - start
+        # Spy on sleep instead of bounding the wall clock: a loaded machine
+        # can make a no-op request take longer than the stall itself, and the
+        # spy asserts the actual property being tested (no stall happened).
+        with mock.patch.object(engine_mod.time, 'sleep') as sleep:
+            engine._process_request(sock, line)
 
-        self.assertLess(elapsed, _STALL_SECONDS)
+        sleep.assert_not_called()
         self.assertAlmostEqual(engine.values['amp.fuzz'], 0.31)
 
     # --- stall on setpreset ----------------------------------------------
@@ -147,6 +152,11 @@ class FakeEngineFaultInjectionTests(unittest.TestCase):
         self.assertEqual(engine.values['system.current_preset'], 'Crunch')
 
     # --- crash injection --------------------------------------------------
+    #
+    # Every child writes 'STARTED' (deliberately left unflushed) before it
+    # dispatches the request and 'REACHED-END' after the request returns, so
+    # the assertions below can tell an injected os._exit() apart both from a
+    # clean run and from a child that died before reaching the request.
 
     def run_child(self, faults, method, params):
         code = (
@@ -159,6 +169,10 @@ class FakeEngineFaultInjectionTests(unittest.TestCase):
             "engine = mod.FakeEngine()\n"
             "request = json.dumps({'jsonrpc': '2.0', 'method': sys.argv[3],"
             " 'params': json.loads(sys.argv[4])}).encode('utf-8')\n"
+            # Not flushed on purpose: on the crash paths this line only
+            # reaches the parent because the engine flushes stdout/stderr
+            # before calling os._exit().
+            "sys.stdout.write('STARTED\\n')\n"
             "engine._process_request(None, request)\n"
             "sys.stdout.write('REACHED-END\\n')\n"
         )
@@ -172,6 +186,7 @@ class FakeEngineFaultInjectionTests(unittest.TestCase):
         proc = self.run_child({'crash_on': 'set'}, 'set', ['amp.fuzz', 0.5])
         self.assertEqual(proc.returncode, 1)
         self.assertNotIn('Traceback', proc.stderr)
+        self.assertIn('STARTED', proc.stdout)
         self.assertNotIn('REACHED-END', proc.stdout)
 
     def test_crash_on_setpreset_exits_nonzero(self):
@@ -179,12 +194,14 @@ class FakeEngineFaultInjectionTests(unittest.TestCase):
                               ['Warm', 'Crunch'])
         self.assertEqual(proc.returncode, 1)
         self.assertNotIn('Traceback', proc.stderr)
+        self.assertIn('STARTED', proc.stdout)
         self.assertNotIn('REACHED-END', proc.stdout)
 
     def test_crash_on_set_does_not_affect_other_methods(self):
         proc = self.run_child({'crash_on': 'set'}, 'setpreset',
                               ['Warm', 'Crunch'])
         self.assertEqual(proc.returncode, 0)
+        self.assertIn('STARTED', proc.stdout)
         self.assertIn('REACHED-END', proc.stdout)
 
 
