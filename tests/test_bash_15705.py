@@ -73,10 +73,22 @@ class AudioPlaybackAccessibilityTest(unittest.TestCase):
         )
         self.assertLess(toggle_play, label)
         # The label must appear before the next top-level function definition
-        # that follows togglePlay's body.
-        tail = self.source[label:]
-        next_fn = re.search(r'\nfunction \w+\(', tail)
-        self.assertIsNotNone(next_fn)
+        # after togglePlay, i.e. it is inside togglePlay's body.
+        next_fn = re.search(r'\nfunction \w+\(', self.source[toggle_play:])
+        self.assertIsNotNone(next_fn, 'no function follows togglePlay to bound its body')
+        self.assertLess(label, toggle_play + next_fn.start())
+
+    def test_audio_aria_label_is_set_exactly_once(self):
+        # A duplicated assignment is dead code, and the presence-only checks
+        # above would not notice it: bound togglePlay's body and count.
+        toggle_play = self.source.index('function togglePlay(')
+        next_fn = re.search(r'\nfunction \w+\(', self.source[toggle_play:])
+        self.assertIsNotNone(next_fn, 'no function follows togglePlay to bound its body')
+        body = self.source[toggle_play:toggle_play + next_fn.start()]
+        self.assertEqual(
+            body.count("audio.setAttribute('aria-label', 'Playback for ' + item.name);"),
+            1,
+        )
 
 
 if __name__ == '__main__':

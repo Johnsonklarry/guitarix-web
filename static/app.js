@@ -1345,7 +1345,6 @@ function togglePlay(row, item, btn, quiet) {
   audio.src = mediaUrl('take', item.name);
   audio.dataset.take = item.name;
   audio.setAttribute('aria-label', 'Playback for ' + item.name);
-  audio.setAttribute('aria-label', 'Playback for ' + item.name);
   td.appendChild(audio);
   tr.appendChild(td);
   row.after(tr);
