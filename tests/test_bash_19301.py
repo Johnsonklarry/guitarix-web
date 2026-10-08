@@ -335,13 +335,19 @@ class StateCoordinatorTestCase(unittest.TestCase):
             self.skipTest("app.py could not be imported for this test")
         coordinator = self._swap_coordinator()
 
+        # Assert that each path moves the generation, not by how much: the
+        # number of coordinator updates behind one app path is an internal
+        # detail, and pinning it would fail the day a path legitimately
+        # records one more thing.
+        baseline = coordinator.get_generation()
         self.app_module.on_status(True)
-        self.assertEqual(1, coordinator.get_generation())
+        self.assertGreater(coordinator.get_generation(), baseline)
         self.assertEqual({"connected": True}, coordinator.get_state("status"))
 
+        baseline = coordinator.get_generation()
         self.app_module.on_params({"system.current_bank": "Bank",
                                    "system.current_preset": "Preset"})
-        self.assertEqual(2, coordinator.get_generation())
+        self.assertGreater(coordinator.get_generation(), baseline)
         self.assertEqual({"bank": "Bank", "preset": "Preset"},
                          coordinator.get_state("preset"))
 
