@@ -12,6 +12,12 @@ def parse_systemd_unit(path):
     Directives are stored under the section they appear in. Lines that are
     blank, comments, or section headers are handled; a directive repeated in
     the same section keeps the last value seen.
+
+    This handles the simple key=value unit files used in this repo
+    (guitarix-web.service, guitarix-demo.service, guitarix-connect.service).
+    It does not implement systemd line continuations (a trailing backslash) or
+    additive directives that legitimately repeat, such as multiple
+    Environment= lines, so it is not a general systemd unit parser.
     """
     sections = {}
     current = None
@@ -34,6 +40,29 @@ def parse_systemd_unit(path):
                 sections.setdefault(current, {})
             sections[current][key] = value
     return sections
+
+
+SHARED_SERVICE_KEYS = ("User", "Group", "WorkingDirectory", "Restart")
+
+
+def assert_shared_service_keys_match(testcase, web, demo,
+                                     keys=SHARED_SERVICE_KEYS):
+    """Assert two parsed units agree on every key they share in [Service].
+
+    Uses testcase.assertEqual so a disagreement surfaces as a normal unittest
+    AssertionError naming the offending key and both values. Returns without
+    raising when every key matches.
+    """
+    web_service = web.get("Service", {})
+    demo_service = demo.get("Service", {})
+    for key in keys:
+        testcase.assertEqual(
+            web_service.get(key),
+            demo_service.get(key),
+            "guitarix-web.service and guitarix-demo.service disagree on %r: "
+            "web=%r demo=%r"
+            % (key, web_service.get(key), demo_service.get(key)),
+        )
 
 
 def _unit_path(name):
@@ -61,20 +90,99 @@ class ServiceFileTests(unittest.TestCase):
                 % (key, sorted(web_service)),
             )
 
-        for key in ("User", "Group", "WorkingDirectory", "Restart"):
+        for key in SHARED_SERVICE_KEYS:
             self.assertIn(
                 key,
                 demo_service,
                 "guitarix-demo.service [Service] is missing required key %r; got %r"
                 % (key, sorted(demo_service)),
             )
-            self.assertEqual(
-                web_service.get(key),
-                demo_service.get(key),
-                "guitarix-web.service and guitarix-demo.service disagree on %r: "
-                "web=%r demo=%r"
-                % (key, web_service.get(key), demo_service.get(key)),
-            )
+
+        assert_shared_service_keys_match(self, web, demo)
+
+    def test_demo_service_deployed_spec(self):
+        demo_path = _unit_path("guitarix-demo.service")
+        demo = parse_systemd_unit(demo_path)
+
+        self.assertEqual(
+            sorted(demo),
+            ["Install", "Service", "Unit"],
+            "guitarix-demo.service must define exactly the [Unit], [Service] "
+            "and [Install] sections; got %r" % (sorted(demo),),
+        )
+
+        unit = demo["Unit"]
+        service = demo["Service"]
+        install = demo["Install"]
+
+        self.assertEqual(
+            unit.get("Description"),
+            "Guitarix demo web interface",
+            "guitarix-demo.service [Unit] Description mismatch: %r"
+            % (unit.get("Description"),),
+        )
+        self.assertEqual(
+            unit.get("After"),
+            "network.target sound.target guitarix-jack.service",
+            "guitarix-demo.service [Unit] After mismatch: %r"
+            % (unit.get("After"),),
+        )
+        self.assertEqual(
+            unit.get("Wants"),
+            "guitarix-jack.service",
+            "guitarix-demo.service [Unit] Wants mismatch: %r"
+            % (unit.get("Wants"),),
+        )
+
+        self.assertEqual(
+            service.get("Type"),
+            "simple",
+            "guitarix-demo.service [Service] Type mismatch: %r"
+            % (service.get("Type"),),
+        )
+        self.assertEqual(
+            service.get("User"),
+            "guitarix",
+            "guitarix-demo.service [Service] User mismatch: %r"
+            % (service.get("User"),),
+        )
+        self.assertEqual(
+            service.get("Group"),
+            "guitarix",
+            "guitarix-demo.service [Service] Group mismatch: %r"
+            % (service.get("Group"),),
+        )
+        self.assertEqual(
+            service.get("WorkingDirectory"),
+            "/opt/guitarix",
+            "guitarix-demo.service [Service] WorkingDirectory mismatch: %r"
+            % (service.get("WorkingDirectory"),),
+        )
+        self.assertEqual(
+            service.get("ExecStart"),
+            "/opt/guitarix/venv/bin/python -m guitarix.web --demo",
+            "guitarix-demo.service [Service] ExecStart mismatch: %r"
+            % (service.get("ExecStart"),),
+        )
+        self.assertEqual(
+            service.get("Restart"),
+            "on-failure",
+            "guitarix-demo.service [Service] Restart mismatch: %r"
+            % (service.get("Restart"),),
+        )
+        self.assertEqual(
+            service.get("Environment"),
+            "GUITARIX_DEMO=1",
+            "guitarix-demo.service [Service] Environment mismatch: %r"
+            % (service.get("Environment"),),
+        )
+
+        self.assertEqual(
+            install.get("WantedBy"),
+            "multi-user.target",
+            "guitarix-demo.service [Install] WantedBy mismatch: %r"
+            % (install.get("WantedBy"),),
+        )
 
 
 def main():

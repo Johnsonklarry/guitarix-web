@@ -388,6 +388,67 @@ def _record_parts(value):
     return None, None, 0, "" if value is None else str(value)
 
 
+def telemetry_point(name, measured_ms=None, budget_ms=None, xruns=0, detail="", test=None):
+    """A telemetry data point, in the shape build_report() reads.
+
+    A point is a plain dict -- {"name": ..., "measured_ms": ..., ...} -- so it
+    can be written to JSON and read back, and a benchmark in another process
+    can hand one over without importing this module.
+
+    measured_ms and budget_ms are kept when they are numbers and dropped when
+    they are not; xruns is a count, and an unreadable one is 0 rather than a
+    crash, exactly as in a record. `test` names the test or benchmark that
+    produced the point; it is folded into the detail line, so a measurement in
+    the report can be traced back to whatever measured it.
+    """
+    if name is None or not str(name).strip():
+        raise ValueError("a telemetry point needs a name")
+    point = {"name": str(name), "xruns": _as_int(xruns)}
+    measured = _number_or_none(measured_ms)
+    if measured is not None:
+        point["measured_ms"] = measured
+    budget = _number_or_none(budget_ms)
+    if budget is not None:
+        point["budget_ms"] = budget
+    detail = "" if detail is None else str(detail)
+    if test:
+        detail = "%s (from %s)" % (detail, test) if detail else "from %s" % test
+    if detail:
+        point["detail"] = detail
+    return point
+
+
+def _telemetry_records(telemetry):
+    """(name, value) pairs out of telemetry data points, in the order given.
+
+    A list of points, a single point on its own, or a {name: point} mapping all
+    do the job. A point without a name is skipped: it can't be filed under a
+    budget or an Other measurement, and the rest of the run's telemetry is
+    still worth reporting.
+    """
+    if isinstance(telemetry, dict) and ("name" in telemetry or "budget" in telemetry):
+        telemetry = [telemetry]
+    return [(name, value) for name, value in _iter_records(telemetry)
+            if str(name).strip()]
+
+
+def format_benchmark_result(records=None, telemetry=None, **kwargs):
+    """A benchmark run formatted as a markdown report.
+
+    The utility a benchmark or a test calls when it has numbers: measurements
+    go in through `records`, the telemetry data points it gathered go in
+    through `telemetry`, and any other keyword is a budget of its own, so
+
+        format_benchmark_result(
+            {"guitar": {"measured_ms": 8.5, "budget_ms": 10.0}},
+            telemetry=[telemetry_point("reamp", 12.0, 10.0, xruns=2, test="spike")])
+
+    is the guitar measurement and the reamp telemetry point in one report.
+    build_report() does the work; this is the same call, named for the job.
+    """
+    return build_report(records, telemetry=telemetry, **kwargs)
+
+
 def _budget_lines(title, measured, budget, xruns, detail):
     lines = ["### " + title]
     if measured is None:
@@ -405,7 +466,7 @@ def _budget_lines(title, measured, budget, xruns, detail):
 
 
 def build_report(records=None, xruns=None, sample_rate=SAMPLE_RATE, frames=PERIOD_FRAMES,
-                 **budgets):
+                 telemetry=None, **budgets):
     """Compose latency budget records into a markdown report.
 
     `records` maps a budget name to what was measured for it. A record is a
@@ -420,6 +481,13 @@ def build_report(records=None, xruns=None, sample_rate=SAMPLE_RATE, frames=PERIO
     record dicts, each carrying a "name", does the same job, and a budget can
     also be handed over as a keyword: build_report(guitar={"measured_ms": 8.5}).
 
+    `telemetry` carries telemetry data points a test or benchmark run measured,
+    as built by telemetry_point(). Each one is folded in as a record, so a
+    point named after one of the budgets lands in that budget's section and
+    everything else is listed under Other measurements. A point for a budget
+    that already has a record keeps the earlier record and is printed under
+    Other measurements, exactly like a duplicate record is.
+
     Every budget gets a section whether or not it was measured, so the report
     has the same shape every time and a measurement that is missing says so
     rather than quietly disappearing. If two records land on the same budget
@@ -433,6 +501,15 @@ def build_report(records=None, xruns=None, sample_rate=SAMPLE_RATE, frames=PERIO
     """
     if budgets:
         records = dict(records or {}, **budgets)
+
+    telemetry = _telemetry_records(telemetry)
+    if telemetry:
+        # Telemetry points are records too: what a test run measured is
+        # reported rather than measured and then thrown away.
+        if isinstance(records, dict):
+            records = list(records.items()) + telemetry
+        else:
+            records = list(records or []) + telemetry
 
     collected, other = {}, []
     for name, value in _iter_records(records):

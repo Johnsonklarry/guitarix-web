@@ -757,17 +757,19 @@ function applyValues(values, remote) {
   Object.keys(values).forEach(function (id) {
     state.values[id] = values[id];
 
+    // A parameter id can be rendered by more than one view at once -- a
+    // switch and a slider, a select and a readout. Apply the value to every
+    // representation that exists instead of stopping at the first match, so
+    // no view is left showing a stale value.
     if (switches[id]) {
       const was = switches[id].classList.contains('is-on');
       applyToggle(id, values[id]);
       if (remote && was !== switches[id].classList.contains('is-on')) flash(switches[id], 'is-remote');
-      return;
     }
     if (selects[id]) {
       const before = selects[id].value;
       setChoice(selects[id], values[id]);
       if (remote && before !== selects[id].value) flash(selects[id], 'is-remote');
-      return;
     }
 
     const input = sliders[id];
