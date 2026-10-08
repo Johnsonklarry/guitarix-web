@@ -135,7 +135,10 @@ _socketio_emit = socketio.emit
 
 
 def _broadcast_guarded_emit(event, data=None, *a, **kw):
-    if BROADCAST:
+    # An emit carrying to=<sid> is a private reply, not a fan-out broadcast:
+    # op_done reaches the browser that started the operation that way, so let
+    # it through untouched instead of dropping it with the rest.
+    if BROADCAST and not kw.get("to"):
         if event not in BROADCAST_EMITS:
             return
         if event == "snapshot":
@@ -185,56 +188,49 @@ socketio.start_background_task = _start_task_for_requester
 
 
 class StateCoordinator:
-    """Thread-safe coordinator tracking subsystem states with monotonic generation numbering."""
+    """Thread-safe registry for the state of every subsystem we track.
 
-    def __init__(self, state_obj=None):
-        self.lock = threading.Lock()
-        self._lock = self.lock
-        self.state = state_obj
-        self.generation = 0
+    Each accepted update stores the new state and bumps a *monotonic*
+    generation counter, both under the same lock. The counter never goes
+    backwards and grows by exactly one per update, so a browser can compare
+    generations to tell "unchanged" from "changed" without diffing payloads.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._generation = 0
         self._states = {}
 
-    @property
-    def _generation(self):
-        return self.generation
-
-    @_generation.setter
-    def _generation(self, value):
-        self.generation = value
-
-    def update_subsystem(self, name, state):
-        with self.lock:
-            self._states[name] = state
-            self.generation += 1
-            return self.generation
-
-    def next_generation(self):
-        with self.lock:
-            self.generation += 1
-            return self.generation
-
     def get_generation(self):
-        with self.lock:
-            return self.generation
+        """The current generation. Starts at 0 and only ever increases."""
+        with self._lock:
+            return self._generation
+
+    def update(self, subsystem, state):
+        """Store *state* for *subsystem*, bump the generation, return it."""
+        with self._lock:
+            self._states[subsystem] = state
+            self._generation += 1
+            return self._generation
+
+    def get_state(self, subsystem, default=None):
+        """The last state stored for *subsystem* (or *default*)."""
+        with self._lock:
+            return self._states.get(subsystem, default)
 
     def snapshot(self):
-        with self.lock:
-            if self.state is not None:
-                snap = self.state.snapshot()
-                snap["generation"] = self.generation
-                return snap
-            return {
-                "generation": self.generation,
-                "states": dict(self._states),
-            }
+        """One consistent ``(generation, {subsystem: state})`` view.
 
-    def publish(self, event, payload=None):
-        gen = self.next_generation()
-        if isinstance(payload, dict):
-            payload = dict(payload)
-            payload["generation"] = gen
-        socketio.emit(event, payload)
-        return gen
+        The generation and the copy of the states are read under the same
+        lock, so a reader can never see a half-applied update.
+        """
+        with self._lock:
+            return self._generation, dict(self._states)
+
+
+# Application entry point state: every browser-facing subsystem update goes
+# through this one coordinator, so generations stay monotonic process-wide.
+state_coordinator = StateCoordinator()
 
 
 class AmpState:
@@ -369,8 +365,10 @@ def read_rec_feed(path=None, now=None):
 
 def push_recordings():
     publish_rec_feed()
-    socketio.emit("recordings", {"rec": rec_payload(), "items": rec.listing(),
-                                 "backing_items": backing.listing()})
+    payload = {"rec": rec_payload(), "items": rec.listing(),
+               "backing_items": backing.listing()}
+    state_coordinator.update("recordings", payload)
+    socketio.emit("recordings", payload)
 
 
 rec = Recorder(on_change=push_recordings)
@@ -529,6 +527,7 @@ def set_dirty(value):
         changed = state.dirty != value
         state.dirty = value
     if changed:
+        state_coordinator.update("dirty", {"dirty": value})
         socketio.emit("dirty", {"dirty": value})
 
 
@@ -573,6 +572,7 @@ def flusher():
             _pending.clear()
         with state.lock:
             state.values.update(batch)
+        state_coordinator.update("params", batch)
         socketio.emit("params", batch)
 
 
@@ -586,6 +586,7 @@ def on_params(changes):
             state.bank = changes.get("system.current_bank", state.bank)
             state.preset = changes.get("system.current_preset", state.preset)
             payload = {"bank": state.bank, "preset": state.preset}
+        state_coordinator.update("preset", payload)
         socketio.emit("preset", payload)
     queue_params(changes)
 
@@ -619,6 +620,7 @@ def _refresh_after_event():
 def on_status(connected):
     with state.lock:
         state.connected = connected
+    state_coordinator.update("status", {"connected": connected})
     socketio.emit("status", {"connected": connected})
     log.info("guitarix %s", "connected" if connected else "disconnected")
 
@@ -644,7 +646,9 @@ def on_ready():
 
     log.info("loaded %d parameters, %d eq groups, %d fx groups, %d banks",
              len(parameters), len(eq), len(fx), len(banks))
-    socketio.emit("snapshot", state.snapshot())
+    snapshot = state.snapshot()
+    state_coordinator.update("snapshot", snapshot)
+    socketio.emit("snapshot", snapshot)
 
 
 def refresh_preset():

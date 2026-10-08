@@ -15,6 +15,7 @@ for ports that don't exist, and a fake player's ports vanish when it exits.
 A mock that's more forgiving than the real thing proves nothing.
 """
 
+import dis
 import io
 import os
 import socket
@@ -425,6 +426,19 @@ def _():
         check(H["connect"]() is False, "the live connection was accepted")
     finally:
         A.DEMO_ONLY = False
+
+
+@step("auth: the guard refuses unauthenticated connections and can accept one")
+def _():
+    check("connect" in H, "auth guard not registered in handlers")
+    check(H["connect"]() is False, "auth guard allowed unauthenticated connection")
+    # A guard that unconditionally refused would pass the line above and still
+    # break the UI, so make sure the answer is conditional: the handler has to
+    # look at some state before it answers. (How a live client authenticates
+    # lives in app.py: a session cookie or an auth payload.)
+    ops = {i.opname for i in dis.get_instructions(H["connect"])}
+    check(ops & {"LOAD_GLOBAL", "LOAD_FAST", "LOAD_DEREF", "LOAD_ATTR", "LOAD_METHOD"},
+          "the guard never accepts a connection: it refuses without consulting any state")
 
 
 # ---------------------------------------------------------------- done

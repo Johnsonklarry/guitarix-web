@@ -31,6 +31,8 @@ from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGE = "file://" + os.path.join(ROOT, "preview.html")
+# This audit drives preview.html only: it makes no claim about app.py or about
+# the content demo.py had before deletion (see tests/test_bash_16701.py).
 
 CONTROLS = ("button, a[href], select, input:not([type=hidden]), label.act, label.dry-toggle, "
             "[role=tab], .takes__badge.is-action")
