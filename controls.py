@@ -92,6 +92,34 @@ def pretty_band(text, fallback):
     return "%g Hz" % hz
 
 
+def widget_kind(pid, info, widgets):
+    """
+    Which kind of control a parameter should be drawn with.
+
+    `widgets` is an optional list of {"match": <regex on the id>, "widget":
+    <kind>} overrides, from the group spec; a matching entry wins outright.
+    Otherwise a parameter with a non-empty `options` list is a picker, a
+    0/1 value with a step of at least 1 (or anything the engine calls bool)
+    is a switch, and everything else is a continuous slider.
+    """
+    for entry in widgets or []:
+        pattern = entry.get("match")
+        if pattern and re.search(pattern, pid, re.I):
+            return entry["widget"]
+
+    if info.get("options"):
+        return "choice"
+
+    if "bool" in str(info.get("type", "")).lower():
+        return "switch"
+
+    if (info.get("min") == 0 and info.get("max") == 1
+            and (info.get("step") or 0) >= 1):
+        return "switch"
+
+    return "slider"
+
+
 EQ_GROUPS = [
     {
         "layout": "rack",
@@ -257,6 +285,7 @@ def _partition(spec, members):
 
 def _group(spec, sub, members, toggle):
     order = sub.get("order", spec.get("order", []))
+    widgets = sub.get("widgets", spec.get("widgets", []))
     rank = {}
     for i, entry in enumerate(order):
         rank.setdefault(entry.lower(), i)
@@ -295,6 +324,7 @@ def _group(spec, sub, members, toggle):
 
     members = [dict(p, name=label_for(p)) for p in members]
     members = _disambiguate(members, spec["prefix"])
+    members = [dict(p, kind=widget_kind(p["id"], p, widgets)) for p in members]
 
     return {
         "prefix": spec["prefix"],
