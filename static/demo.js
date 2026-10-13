@@ -165,7 +165,19 @@ const DEMO = (function () {
   const handlers = {};
   function fire(event, data) { if (handlers[event]) handlers[event](data); }
   function later(ms, fn) { setTimeout(fn, ms); }
-  function done(msg, ok) { if (msg && msg.op) later(350, function () { fire('op_done', { op: msg.op, ok: ok !== false }); }); }
+
+  /* Every accepted op settles exactly once. The envelope is built here, the
+     id is remembered here, and the 350 ms delay lives here, so a handler that
+     completes twice -- or two emits reusing one op -- still produce a single
+     op_done on the wire. */
+  const completed = new Set();
+  function complete(op, ok) {
+    if (!op || completed.has(op)) return;
+    completed.add(op);
+    const envelope = { op: op, ok: ok !== false };
+    later(350, function () { fire('op_done', envelope); });
+  }
+  function done(msg, ok) { if (msg && msg.op) complete(msg.op, ok); }
   function toast(text, kind) { fire('toast', { text: text, kind: kind || 'ok' }); }
   function rec() { return JSON.parse(JSON.stringify(R)); }
   function pushRec() { fire('rec', rec()); }
@@ -400,7 +412,7 @@ const DEMO = (function () {
       pushRec();
       if (m.op) {
         const wait = setInterval(function () {
-          if (!R.export) { clearInterval(wait); fire('op_done', { op: m.op, ok: true }); }
+          if (!R.export) { clearInterval(wait); complete(m.op, true); }
         }, 500);
       }
     },
