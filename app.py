@@ -475,6 +475,17 @@ def done_journal_record(op_id, op, ok):
         _journal_put(op_id, op, ok)
 
 
+def op_already_done(op_id):
+    """
+    The recorded (op, ok) for `op_id` when that operation has already
+    finished, or None when it is unknown. Callers check this BEFORE doing
+    anything destructive, so a retry of an operation that completed -- even
+    one that completed before a restart, when the journal was refilled from
+    disk -- is answered from the journal instead of being run a second time.
+    """
+    return done_journal_lookup(op_id)
+
+
 def done_journal_claim(op_id, op, ok):
     """
     Look `op_id` up and, when it is not already known, record `op`/`ok` for it
@@ -1189,12 +1200,16 @@ def client_preset_rename(msg):
 @socketio.on("preset_delete")
 def client_preset_delete(msg):
     bank, name = (msg or {}).get("bank"), (msg or {}).get("name")
+    op = (msg or {}).get("op")
+    already = op_already_done(op)
+    if already is not None:
+        return done(already[0], already[1], op)
     if not bank or not name:
-        done((msg or {}).get("op"), False)
+        done(op, False)
         return
     _preset_action(lambda: rpc.preset_delete(bank, name), "Deleted %s" % name,
                    verify=lambda m: name not in m.get(bank, []),
-                   op=(msg or {}).get("op"))
+                   op=op)
 
 
 @socketio.on("preset_move")
@@ -2006,6 +2021,9 @@ def client_rec_rename(msg):
 @socketio.on("rec_delete")
 def client_rec_delete(msg):
     op = (msg or {}).get("op")
+    already = op_already_done(op)
+    if already is not None:
+        return done(already[0], already[1], op)
     try:
         rec.delete((msg or {}).get("name"))
     except (FileNotFoundError, RuntimeError, OSError) as exc:

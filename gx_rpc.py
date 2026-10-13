@@ -197,6 +197,18 @@ class GuitarixRPC:
         self._send_lock = threading.Lock()
         self._stop = threading.Event()
 
+        # Correlated call futures. Each call() registers a future under a
+        # unique correlation id; the reader thread resolves the future whose
+        # id matches the reply. A reply for an id that is no longer registered
+        # (timed out, cancelled, or already resolved) is discarded, so a late
+        # reply can never satisfy a retry or a different caller.
+        self._futures = {}
+        self._futures_lock = threading.Lock()
+        self._call_seq = 0
+        self._reconnect_gen = 0
+        self._gen_lock = threading.Lock()
+        self._reconnect_cond = threading.Condition()
+
         # one queue per lane, drained HIGH first; the condition lets a
         # waiting sender be woken when the lane it wants has room
         self._lanes = {lane: queue.Queue() for lane in LANES}
@@ -246,6 +258,11 @@ class GuitarixRPC:
         # subscribe this connection to every state change
         self.notify("listen", ["all"])
 
+        # Wake any opted-in call waiting to retry after a reconnect.
+        with self._reconnect_cond:
+            self._reconnect_gen += 1
+            self._reconnect_cond.notify_all()
+
         self.on_status(True)
         # bootstrap runs off-thread because it makes calls, and calls need
         # the reader loop below to be running to collect their replies.
@@ -271,6 +288,14 @@ class GuitarixRPC:
             self._replies.put_nowait(None)
         except queue.Full:
             pass
+        # Fail every outstanding future: the connection they were waiting on
+        # is gone. Opted-in callers re-register a fresh future after the
+        # reconnect; everyone else sees the disconnect.
+        with self._futures_lock:
+            futures = list(self._futures.values())
+            self._futures.clear()
+        for fut in futures:
+            fut["event"].set()
         if was:
             self.on_status(False)
 
@@ -308,16 +333,24 @@ class GuitarixRPC:
                 with self._lane_cond:
                     self._lane_cond.wait(timeout=0.05)
                 continue
-            method, params, call_id = item
+            method, params, call_id, future = item
+            if future is not None:
+                # Skip calls whose future has already timed out or been
+                # cancelled: sending them would be pointless and could apply
+                # an engine-side effect nobody is waiting for.
+                with self._futures_lock:
+                    live = self._futures.get(call_id) is future
+                if not live or future["event"].is_set():
+                    continue
             try:
                 self._send(method, params, call_id)
             except OSError as exc:
                 log.warning("guitarix rpc: dropping %r: %s", method, exc)
 
-    def _enqueue(self, lane, method, params, call_id=None):
+    def _enqueue(self, lane, method, params, call_id=None, future=None):
         if lane not in self._lanes:
             raise ValueError("unknown lane %r" % (lane,))
-        self._lanes[lane].put((method, params, call_id))
+        self._lanes[lane].put((method, params, call_id, future))
         with self._lane_cond:
             self._lane_cond.notify_all()
 
@@ -325,21 +358,52 @@ class GuitarixRPC:
         """Fire and forget, on `lane` (HIGH by default)."""
         self._enqueue(lane, method, params or [])
 
-    def call(self, method, params=None, timeout=5.0, lane=HIGH):
-        """Send a request and wait for its reply, on `lane` (HIGH by default)."""
+    def call(self, method, params=None, timeout=5.0, lane=HIGH, reconnect=False):
+        """
+        Send a request and wait for its reply, on `lane` (HIGH by default).
+
+        `timeout` is the total budget for this call and is preserved across
+        reconnects: a retry does not get a fresh timeout.
+
+        `reconnect` controls what happens if the connection drops while the
+        call is outstanding. By default (False) the call fails immediately
+        with OSError. With reconnect=True the call waits for `_connect` to
+        restore the socket and then re-sends the request with a fresh
+        correlation id, so a late reply to the first attempt cannot satisfy
+        the retry.
+
+        WARNING: retrying a request that was already sent may repeat its
+        engine-side effect. If the engine received and acted on the first
+        attempt before the socket died, the retry applies it a second time.
+        Only opt in for requests that are safe to repeat (reads, idempotent
+        sets); never for preset writes or other non-idempotent operations.
+        """
+        params = params or []
+        deadline = time.monotonic() + timeout
         with self._call_lock:
-            # drain a stale reply left behind by a timed-out call
-            try:
-                self._replies.get_nowait()
-            except queue.Empty:
-                pass
-            self._enqueue(lane, method, params or [], call_id="1")
-            try:
-                reply = self._replies.get(timeout=timeout)
-            except queue.Empty:
-                raise TimeoutError("guitarix did not answer %r" % method)
-        if reply is None:
-            raise OSError("connection closed while calling %r" % method)
+            while True:
+                with self._gen_lock:
+                    gen = self._reconnect_gen
+                fut = self._register_future()
+                self._enqueue(lane, method, params, call_id=fut["id"],
+                              future=fut)
+                try:
+                    reply = self._await_future(fut, deadline)
+                finally:
+                    self._unregister_future(fut["id"])
+                if reply is not None:
+                    break
+                # No reply: either the connection dropped or the deadline
+                # passed. Distinguish the two.
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("guitarix did not answer %r" % method)
+                if not reconnect:
+                    raise OSError("connection closed while calling %r" % method)
+                # Opted in: wait for the next successful _connect, then retry
+                # with a fresh correlation id. The original deadline stands.
+                if not self._wait_for_reconnect(gen, deadline):
+                    raise TimeoutError("guitarix did not answer %r" % method)
         err = reply.get("error")
         if err:
             code = err.get("code") if isinstance(err, dict) else None
@@ -348,6 +412,37 @@ class GuitarixRPC:
                 raise RpcMethodMissing(method)
             raise RpcError("%s: %s" % (method, text or err))
         return reply.get("result")
+
+    def _register_future(self):
+        with self._futures_lock:
+            self._call_seq += 1
+            call_id = "c%d" % self._call_seq
+            fut = {"id": call_id, "event": threading.Event(), "reply": None}
+            self._futures[call_id] = fut
+        return fut
+
+    def _unregister_future(self, call_id):
+        with self._futures_lock:
+            self._futures.pop(call_id, None)
+
+    def _await_future(self, fut, deadline):
+        """Wait for `fut` until `deadline`. Returns the reply or None."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        if not fut["event"].wait(timeout=remaining):
+            return None
+        return fut["reply"]
+
+    def _wait_for_reconnect(self, gen, deadline):
+        """Block until the reconnect generation advances past `gen`."""
+        with self._reconnect_cond:
+            while self._reconnect_gen == gen:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._reconnect_cond.wait(timeout=remaining)
+        return True
 
     def _read_loop(self):
         # Capture the socket once: _close() (another thread) sets self._sock to
@@ -375,10 +470,17 @@ class GuitarixRPC:
             return
 
         if "result" in msg or "error" in msg:
-            try:
-                self._replies.put_nowait(msg)
-            except queue.Full:
-                log.debug("dropping unexpected reply: %s", msg)
+            call_id = msg.get("id")
+            with self._futures_lock:
+                fut = self._futures.get(call_id)
+            if fut is None:
+                # Late reply for a call that timed out, was cancelled, or was
+                # retried under a new id. Discard it: it must not resolve a
+                # retry or a different caller.
+                log.debug("dropping stale reply for id %r", call_id)
+                return
+            fut["reply"] = msg
+            fut["event"].set()
             return
 
         method = msg.get("method")
