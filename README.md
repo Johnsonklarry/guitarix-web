@@ -13,7 +13,7 @@ change to every open browser, so a phone and a laptop stay in step.
 
 ## Contents
 
-- **Getting started:** [Quick start](#quick-start), [Checking it works](#checking-it-works)
+- **Getting started:** [Quick start](#quick-start), [Setting it up step by step](#setting-it-up-step-by-step), [Checking it works](#checking-it-works)
 - **Using it:** [Two layouts](#two-layouts), [Live mode](#live-mode), [Saving and creating presets](#saving-and-creating-presets), [Importing presets](#importing-presets), [Recording, reamping and backing tracks](#recording-reamping-and-backing-tracks), [On a phone: installing it as an app](#on-a-phone-installing-it-as-an-app), [Demo mode](#demo-mode), [Broadcast mode](#broadcast-mode)
 - **Tuning the controls:** [Adding controls](#adding-controls), [Taming a plugin with too many parameters](#taming-a-plugin-with-too-many-parameters), [Cryptic parameter names](#cryptic-parameter-names)
 - **How it works:** [How the sync works](#how-the-sync-works), [When the engine goes quiet mid-operation](#when-the-engine-goes-quiet-mid-operation), [Running under gunicorn](#running-under-gunicorn)
@@ -86,6 +86,144 @@ python3 app.py             # then open http://<pi>:5000
 To have it start at boot, see `guitarix-web.service` -- it's a system service, with the
 steps in its header. Anything below that isn't working is most likely a port
 name: see **Ports to check on the Pi**.
+
+## Setting it up step by step
+
+The quick start above is the short version. This is the same thing in order,
+with what to check at each stage and what to do when a stage doesn't work.
+
+### 1. Install the system packages
+
+```bash
+sudo apt update
+sudo apt install ffmpeg mpv jackd2
+```
+
+ffmpeg does the recording, mpv does the playback, and jackd2 is the audio
+graph both of them plug into. guitarix itself has to be installed too -- if
+`guitarix --version` says nothing, install it from your distribution's
+packages or from the guitarix project.
+
+Check each one answered:
+
+```bash
+ffmpeg -version | head -1
+mpv --version | head -1
+jackd --version | head -1
+```
+
+### 2. Install the Python packages
+
+```bash
+pip install -r requirements.txt
+```
+
+`requirements.txt` lists the pip packages; the apt ones it needs are named
+inside it as comments. If pip complains about an externally managed
+environment, either use a virtualenv or install with
+`pip install --break-system-packages -r requirements.txt` on a machine you
+don't mind that on.
+
+### 3. Start JACK
+
+JACK has to be running before anything else, because guitarix, ffmpeg and mpv
+all connect to it. How you start it depends on your setup -- `qjackctl` is the
+usual way on a desktop, and on a headless Pi something like:
+
+```bash
+jackd -d alsa -r 48000 -p 128 &
+```
+
+Confirm it's up and see what ports exist:
+
+```bash
+jack_lsp -p
+```
+
+If `jack_lsp` says it can't connect to the server, JACK isn't running and
+nothing further will work. Fix that first.
+
+### 4. Start guitarix with its RPC port open
+
+```bash
+guitarix -N -p 7000        # headless
+guitarix -p 7000           # with its window
+```
+
+`-p 7000` is the JSON-RPC port this app talks to, and it has to match `GX_PORT`
+at the top of `app.py`. `-N` runs it without its own window, which is what you
+want on a Pi with no display.
+
+Check it's listening:
+
+```bash
+ss -ltn | grep 7000
+```
+
+### 5. Start the app
+
+```bash
+python3 app.py             # then open http://<pi>:5000
+```
+
+Open that address from a phone or another machine on the same network. If the
+page loads but the presets, EQ and effects are empty, the app isn't reaching
+guitarix -- see **Empty presets, empty EQ, empty effects**.
+
+For anything beyond a LAN, run it under gunicorn instead; the flags are in
+**Running under gunicorn**.
+
+### 6. Check it against your actual rig
+
+```bash
+python3 app.py --check
+```
+
+This is the step that catches the mistakes the earlier ones can't: port names
+that don't match your interface, a missing mp3 encoder, an mpv built without
+JACK. Work through whatever it reports as `[ FAIL ]` before going further --
+each one names the setting and the file it lives in.
+
+### 7. Run the test suites
+
+```bash
+python3 tests/lint.py
+python3 tests/run_server_tests.py
+python3 tests/broadcast_tests.py
+node tests/check_page.js
+```
+
+All of these are safe to run on the Pi alongside the real thing. A pass means
+the code is sound; it does not mean your port names are right, because the
+fakes can't know your rig. That takes one real reamp and one real Listen.
+
+### 8. Make it start at boot
+
+`guitarix-web.service` is a systemd system service, and its header has the
+steps to install and enable it. There's a demo-only copy in
+`guitarix-demo.service` for showing the app off without exposing the rig.
+
+### Troubleshooting the setup
+
+- **The page won't load at all.** The app isn't running, or you're on the
+  wrong port. `ss -ltn | grep 5000` on the Pi, and check you're using the Pi's
+  address rather than `localhost`.
+- **The page loads but everything is empty.** The app can't reach guitarix.
+  Check `pgrep -a guitarix`, `ss -ltn | grep 7000`, and that `GX_HOST` and
+  `GX_PORT` in `app.py` match. See **Empty presets, empty EQ, empty effects**.
+- **Recording fails immediately.** ffmpeg can't connect to JACK, or the port
+  names in `recorder.py` don't match your rig. `python3 app.py --check` names
+  which. See **Ports to check on the Pi**.
+- **Listen plays nothing.** mpv was built without JACK, or the stream's
+  encoder is missing. `mpv --ao=help | grep jack` and
+  `ffmpeg -encoders | grep mp3` both have to return something.
+- **A reamp leaves your guitar disconnected.** It shouldn't -- the wiring is
+  saved and restored -- but if it does, `jack_lsp -c` shows the current graph
+  and `jack_connect` puts it back. Restarting the app also restores it.
+- **The page keeps running old JavaScript after an update.** Static files are
+  served with a modification-time stamp, so this shouldn't happen; a hard
+  reload clears it if it does.
+- **Nothing works after a reboot.** The service isn't enabled. See step 8.
 
 ## Checking it works
 
