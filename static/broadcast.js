@@ -81,9 +81,11 @@
         PCM.node.port.onmessage = function (e) {
           if (e.data && e.data.underruns !== undefined) PCM.underruns = e.data.underruns;
           if (e.data && e.data.buffered !== undefined) PCM.buffered = e.data.buffered;
+          if (listening) renderStatus();
         };
         PCM.node.connect(PCM.ctx.destination);
         PCM.mode = 'AudioWorklet';
+        if (listening) renderStatus();
         pcmFetch();
       }).catch(function () {
         pcmFallback();
@@ -130,6 +132,7 @@
     };
     PCM.node.connect(PCM.ctx.destination);
     PCM.mode = 'ScriptProcessor';
+    if (listening) renderStatus();
     PCM._ring = ring;
     PCM._ringLen = ringLen;
     PCM._write = function (pcm) {
@@ -191,14 +194,59 @@
   // is connecting rather than showing an empty preset as though it were one.
   var haveSnapshot = false;
 
-  function setLink(up) {
-    if (E.pilot) E.pilot.classList.toggle('is-on', !!up);
+  // The web app link, kept so the status row can be repainted when Listen is
+  // switched off -- the reading it shows belongs to the link, not to playback.
+  var linkUp = false;
+
+  // True while the Listen control has asked the PCM transport to play.
+  var listening = false;
+
+  function linkText() {
+    if (!haveSnapshot) return linkUp ? 'Connecting' : 'Offline';
+    return linkUp ? 'Live' : 'Offline';
+  }
+
+  // The status row carries two different things at different times: the link
+  // reading (Connecting/Live/Offline) and, once Listen is engaged, what the PCM
+  // transport is doing. While listening, the transport reading wins.
+  function renderStatus() {
     if (!E.status) return;
-    if (!haveSnapshot) {
-      E.status.textContent = up ? 'Connecting' : 'Offline';
+    if (listening) {
+      var mode = PCM.mode && PCM.mode !== 'idle' ? PCM.mode : 'starting';
+      E.status.textContent = 'Listening - ' + mode +
+        ' - buffer ' + (PCM.buffered || 0) + '/' + PCM.target;
     } else {
-      E.status.textContent = up ? 'Live' : 'Offline';
+      E.status.textContent = linkText();
     }
+  }
+
+  function setLink(up) {
+    linkUp = !!up;
+    if (E.pilot) E.pilot.classList.toggle('is-on', linkUp);
+    renderStatus();
+  }
+
+  // Listen is the only control a broadcast visitor has. The transport is
+  // swapped by replacing window.gxPcm, the same object the page publishes, so
+  // callers and tests can stand in for the real audio path. The call is
+  // synchronous so pcmStart() still runs inside the user gesture.
+  function onListenClick() {
+    if (!listening) {
+      if (window.gxPcm && window.gxPcm.start) window.gxPcm.start();
+      listening = true;
+    } else {
+      if (window.gxPcm && window.gxPcm.stop) window.gxPcm.stop();
+      listening = false;
+    }
+    if (E.stream) {
+      E.stream.setAttribute('aria-pressed', listening ? 'true' : 'false');
+      E.stream.classList.toggle('on', listening);
+    }
+    renderStatus();
+  }
+
+  if (E.stream && E.stream.addEventListener) {
+    E.stream.addEventListener('click', onListenClick);
   }
 
   function setPreset(bank, preset) {
