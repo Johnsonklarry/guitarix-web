@@ -1871,6 +1871,8 @@ dialog[open]::backdrop       { animation: fade-in .18s ease-out; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 6px 11px;
   border: 1px solid var(--edge);
   border-radius: 999px;
@@ -1906,7 +1908,14 @@ dialog[open]::backdrop       { animation: fade-in .18s ease-out; }
   align-items: center;
   transition: background .14s ease, color .14s ease, border-color .14s ease;
 }
-.takes__badge.is-action { cursor: pointer; border-color: #7a5426; color: var(--lamp); transition: background .14s ease;   padding: 6px 10px;
+.takes__badge.is-action {
+  cursor: pointer;
+  border-color: #7a5426;
+  color: var(--lamp);
+  transition: background .14s ease;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 6px 10px;
 }
 @media (hover: hover) and (pointer: fine) {
   .takes__badge.is-action:hover { background: #33261a; }
