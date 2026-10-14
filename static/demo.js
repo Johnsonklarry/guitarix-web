@@ -28,6 +28,25 @@ const DEMO = (function () {
   ];
   const cur = { bank: 'Rock', preset: 'Crunch Rhythm' };
 
+  /* The last few presets the player picked, most recent first and shared
+     across banks. The browser shows them as a "Recently used" section pinned
+     to the top of the bank list. Bank and preset are joined as "Bank/Preset"
+     so two banks can both hold a preset with the same name without colliding. */
+  const recentMax = 5;
+  let recent = [cur.bank + '/' + cur.preset];
+  function noteRecent(bank, preset) {
+    const key = bank + '/' + preset;
+    recent = recent.filter(function (k) { return k !== key; });
+    recent.unshift(key);
+    if (recent.length > recentMax) recent = recent.slice(0, recentMax);
+  }
+  function recentSection() {
+    return { name: 'Recently used', recent: true, presets: recent.slice() };
+  }
+  function bankList() {
+    return [recentSection()].concat(JSON.parse(JSON.stringify(banks)));
+  }
+
   const band = function (id, name, min, max, step, extra) {
     return Object.assign({ id: id, name: name, min: min, max: max, step: step, value: 0,
                            type: 'FloatParameter', desc: '' }, extra || {});
@@ -182,13 +201,13 @@ const DEMO = (function () {
   function rec() { return JSON.parse(JSON.stringify(R)); }
   function pushRec() { fire('rec', rec()); }
   function pushTakes() { fire('recordings', { rec: rec(), items: takes.slice(), backing_items: backingItems.slice() }); }
-  function pushBanks() { fire('banks', { banks: JSON.parse(JSON.stringify(banks)), bank: cur.bank, preset: cur.preset }); }
+  function pushBanks() { fire('banks', { banks: bankList(), bank: cur.bank, preset: cur.preset }); }
   function findBank(name) { return banks.find(function (b) { return b.name === name; }); }
   const stem = function (n) { return n.replace(/\.[^.]+$/, ''); };
 
   function snapshot() {
     return { connected: true, engine: 'demo', bank: cur.bank, preset: cur.preset,
-             banks: JSON.parse(JSON.stringify(banks)),
+             banks: bankList(),
              can: { save_current: true, save_as: true, rename: true, delete: true,
                     new_bank: true, delete_bank: true, move: true },
              eq: eq, fx: fx, values: Object.assign({}, values), dirty: dirty,
@@ -203,8 +222,10 @@ const DEMO = (function () {
   function load(bank, preset) {
     cur.bank = bank; cur.preset = preset;
     values = presetValues(bank, preset);
+    noteRecent(bank, preset);
     fire('preset', { bank: bank, preset: preset });
     fire('params', Object.assign({}, values));
+    pushBanks();
     setDirty(false);
   }
 
