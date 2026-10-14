@@ -85,6 +85,8 @@ app = Flask(__name__)
 # Signs Socket.IO's session cookie. Nothing needs to survive a restart, so a
 # fresh random key each start is fine; set GX_SECRET_KEY to pin one.
 app.config["SECRET_KEY"] = os.environ.get("GX_SECRET_KEY") or os.urandom(24).hex()
+app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024       # per upload request
 
 
