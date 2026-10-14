@@ -435,8 +435,10 @@ def _export_request_cancel():
 # durable operation id -- replays the original result instead of doing the work
 # twice. The journal is bounded in size and in age: a retry that arrives after
 # the TTL is treated as a brand new request.
-DONE_JOURNAL_MAX = 1024
-DONE_JOURNAL_TTL = 24 * 60 * 60
+_DONE_JOURNAL_MAX = 10000
+_DONE_JOURNAL_TTL = 24 * 60 * 60
+DONE_JOURNAL_MAX = _DONE_JOURNAL_MAX
+DONE_JOURNAL_TTL = _DONE_JOURNAL_TTL
 _done_journal = {}
 _done_journal_lock = threading.Lock()
 
@@ -447,8 +449,9 @@ def _journal_get(op_id):
     if entry is None:
         return None
     cached_op, cached_ok, recorded = entry
-    if DONE_JOURNAL_TTL and time.time() - recorded > DONE_JOURNAL_TTL:
-        del _done_journal[op_id]
+    ttl = globals().get("_DONE_JOURNAL_TTL", globals().get("DONE_JOURNAL_TTL", _DONE_JOURNAL_TTL))
+    if ttl and time.time() - recorded > ttl:
+        _done_journal.pop(op_id, None)
         return None
     return cached_op, cached_ok
 
@@ -456,8 +459,19 @@ def _journal_get(op_id):
 def _journal_put(op_id, op, ok):
     """Caller holds _done_journal_lock. Store the result, then drop the oldest
     entries until the journal is back inside its bound."""
-    _done_journal[op_id] = (op, bool(ok), time.time())
-    while DONE_JOURNAL_MAX and len(_done_journal) > DONE_JOURNAL_MAX:
+    now = time.time()
+    ttl = globals().get("_DONE_JOURNAL_TTL", globals().get("DONE_JOURNAL_TTL", _DONE_JOURNAL_TTL))
+    if ttl:
+        while _done_journal:
+            oldest = next(iter(_done_journal))
+            if now - _done_journal[oldest][2] > ttl:
+                del _done_journal[oldest]
+            else:
+                break
+    _done_journal.pop(op_id, None)
+    _done_journal[op_id] = (op, bool(ok), now)
+    max_entries = globals().get("_DONE_JOURNAL_MAX", globals().get("DONE_JOURNAL_MAX", _DONE_JOURNAL_MAX))
+    while max_entries and len(_done_journal) > max_entries:
         _done_journal.pop(next(iter(_done_journal)))
 
 
