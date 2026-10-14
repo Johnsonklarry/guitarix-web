@@ -53,7 +53,16 @@
     window.location.reload();
   });
 
-  navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(watch).catch(function () {
+  function refreshOnReconnect(registration) {
+    window.addEventListener("online", function () {
+      registration.update().catch(function () {});
+    });
+  }
+
+  navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(function (registration) {
+    watch(registration);
+    refreshOnReconnect(registration);
+  }).catch(function () {
     // The app remains usable when service workers are unavailable.
   });
 }());

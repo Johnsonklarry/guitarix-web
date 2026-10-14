@@ -52,13 +52,47 @@
       text-decoration: none;
     }
     a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    #offline-status { margin: var(--space-5) 0 0; color: var(--accent); }
+    #offline-status[hidden] { display: none; }
   </style>
 </head>
 <body>
   <main>
     <h1>The road is quiet for now.</h1>
     <p>You're offline. Check your connection, then try again.</p>
-    <a href="/">Try again</a>
+    <a href="/" id="retry">Try again</a>
+    <p id="offline-status" role="status" aria-live="polite" hidden>Still offline — reconnecting…</p>
   </main>
+  <script>
+    (function () {
+      "use strict";
+
+      var PROBE_URL = "/sw.js";
+      var status = document.getElementById("offline-status");
+      var retry = document.getElementById("retry");
+      var probing = false;
+
+      function probe() {
+        if (probing) return;
+        probing = true;
+        fetch(PROBE_URL + "?probe=" + Date.now(), { cache: "no-store", credentials: "same-origin" })
+          .then(function (response) {
+            if (!response || !response.ok) throw new Error("probe failed");
+            status.hidden = true;
+            window.location.reload();
+          })
+          .catch(function () {
+            status.hidden = false;
+            probing = false;
+          });
+      }
+
+      retry.addEventListener("click", function (event) {
+        event.preventDefault();
+        probe();
+      });
+      window.addEventListener("online", probe);
+    }());
+  </script>
 </body>
 </html>
