@@ -207,7 +207,14 @@
   }
 
   function setRolling(on) {
-    if (E.rolling) E.rolling.hidden = !on;
+    if (!E.rolling) return;
+    E.rolling.hidden = !on;
+    // Unhiding the tag is not enough: .preset__tag defaults to opacity 0.
+    // Flag the preset row so the CSS can raise it while a take is rolling,
+    // and take the flag off again the moment the take stops.
+    var row = E.rolling.closest ? E.rolling.closest('.preset')
+                                : E.rolling.parentElement;
+    if (row && row.classList) row.classList.toggle('is-rec', !!on);
   }
 
   function setTakes(count) {
