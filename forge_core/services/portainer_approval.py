@@ -8,9 +8,12 @@ inspecting a freshly created request cannot trigger a deployment.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import re
 
 __all__ = ["RedeployRequest", "create_redeploy_request"]
+
+MAX_TTL = timedelta(minutes=15)
 
 
 @dataclass(frozen=True)
@@ -43,19 +46,26 @@ def _as_utc(value):
 def create_redeploy_request(stack, endpoint, revision, requester, expires_at, *, now=None):
     """Validate and freeze a redeploy approval without performing any action.
 
-    ``stack``, ``endpoint``, ``revision`` and ``requester`` must be non-empty
-    strings, and ``expires_at`` must be a :class:`datetime` in the future.
-    The optional ``now`` pins the clock for tests and defaults to UTC now.
+    ``stack``, ``endpoint`` and ``requester`` must be non-empty strings.
+    ``revision`` must be a 7-to-40-character hexadecimal SHA, and
+    ``expires_at`` must be a :class:`datetime` more than zero and at most
+    15 minutes in the future. The optional ``now`` pins the clock for tests
+    and defaults to UTC now.
     """
     stack = _require_text("stack", stack)
     endpoint = _require_text("endpoint", endpoint)
     revision = _require_text("revision", revision)
+    if re.fullmatch(r"[0-9a-fA-F]{7,40}", revision) is None:
+        raise ValueError("revision must be a 7-to-40-character hex SHA")
     requester = _require_text("requester", requester)
     if not isinstance(expires_at, datetime):
         raise TypeError("expires_at must be a datetime")
     reference = _as_utc(now) if now is not None else datetime.now(timezone.utc)
-    if not _as_utc(expires_at) > reference:
+    ttl = _as_utc(expires_at) - reference
+    if ttl <= timedelta(0):
         raise ValueError("expires_at must be in the future")
+    if ttl > MAX_TTL:
+        raise ValueError("expires_at must be no more than 15 minutes in the future")
     return RedeployRequest(
         stack=stack,
         endpoint=endpoint,
