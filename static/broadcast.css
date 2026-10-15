@@ -153,6 +153,12 @@ body {
   opacity: 0;
 }
 
+/* While a take rolls the tag is unhidden, but the opacity above still keeps
+   it invisible. Raise it to full for the preset that is recording. */
+.preset.is-rec .preset__tag {
+  opacity: 1;
+}
+
 /* ---------------------------------------------------------------- status */
 
 .status {
