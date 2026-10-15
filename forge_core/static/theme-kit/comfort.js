@@ -133,17 +133,29 @@
   }
   mount.count = 0;
 
+  function hintedLevel() {
+    if (typeof window.getComputedStyle !== "function") return "standard";
+    var size = parseFloat(window.getComputedStyle(root).fontSize);
+    if (!isFinite(size) || size <= 16) return "standard";
+    if (size >= 24) return "max";
+    if (size >= 20) return "large";
+    return "comfortable";
+  }
+
   var saved = read();
   var initialLevel = root.getAttribute("data-comfort");
   state.level = saved && levels.indexOf(saved.level) !== -1
     ? saved.level
-    : (levels.indexOf(initialLevel) !== -1 ? initialLevel : "standard");
+    : (saved ? (levels.indexOf(initialLevel) !== -1 ? initialLevel : "standard") : hintedLevel());
   state.contrast = saved && typeof saved.contrast === "boolean"
     ? saved.contrast
     : root.getAttribute("data-comfort-contrast") === "on";
   state.motion = saved && typeof saved.motion === "boolean"
     ? saved.motion
-    : root.getAttribute("data-comfort-motion") !== "off";
+    : (saved
+      ? root.getAttribute("data-comfort-motion") !== "off"
+      : !(typeof window.matchMedia === "function" &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches));
   apply();
 
   // Works whether comfort.js or theme.js is loaded first.
