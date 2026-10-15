@@ -25,8 +25,69 @@
   var waiting = false;
   var failed = false;
   var enabled = false;
+  var inputListener = null;
+  var polling = false;
+  var pollTimer = null;
 
   function kit() { return global.GamepadNav || null; }
+
+  function removeInputListener() {
+    if (!inputListener || !doc || typeof doc.removeEventListener !== "function") return;
+    doc.removeEventListener("pointerdown", inputListener);
+    doc.removeEventListener("keydown", inputListener);
+    inputListener = null;
+  }
+
+  function stopPolling() {
+    if (pollTimer !== null) {
+      global.clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    polling = false;
+  }
+
+  function startPolling() {
+    var nav = global.navigator;
+    if (!enabled || polling || !nav || typeof nav.getGamepads !== "function") return;
+
+    polling = true;
+    var deadline = Date.now() + 2000;
+
+    function checkForPad() {
+      pollTimer = null;
+      if (!enabled) { stopPolling(); return; }
+
+      var pads = nav.getGamepads();
+      if (pads) {
+        for (var i = 0; i < pads.length; i++) {
+          if (pads[i]) {
+            stopPolling();
+            whenReady(function (k) {
+              if (enabled && !k.isStarted()) k.start();
+            });
+            return;
+          }
+        }
+      }
+
+      if (Date.now() >= deadline) { stopPolling(); return; }
+      pollTimer = global.setTimeout(checkForPad, 100);
+    }
+
+    checkForPad();
+  }
+
+  function installInputListener() {
+    if (!doc || typeof doc.addEventListener !== "function" ||
+        !global.navigator || typeof global.navigator.getGamepads !== "function") return;
+
+    inputListener = function () {
+      removeInputListener();
+      startPolling();
+    };
+    doc.addEventListener("pointerdown", inputListener);
+    doc.addEventListener("keydown", inputListener);
+  }
 
   function ensureKit() {
     if (kit() || !doc || !kitSrc || doc.querySelector("script[data-gamepad-kit]")) return;
@@ -83,6 +144,7 @@
       if (global.navigator && typeof global.navigator.getGamepads !== "function") {
         console.warn("ForgeGamepad: this browser has no Gamepad API (navigator.getGamepads)");
       }
+      installInputListener();
       whenReady(function (k) {
         if (!enabled) return;
         k.configure({ onAction: wrapOnAction(opts.onAction) });
@@ -92,6 +154,8 @@
     disable: function () {
       if (!enabled) return;
       enabled = false;
+      removeInputListener();
+      stopPolling();
       whenReady(function (k) { if (!enabled && k.isStarted()) k.stop(); });
     },
     _handleAction: function (action) {
