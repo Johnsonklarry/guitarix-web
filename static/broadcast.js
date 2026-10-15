@@ -306,6 +306,18 @@
     setRolling(false);
   });
 
+  socket.on('connect_error', function () {
+    if (E.status) E.status.textContent = 'Connection failed — retrying';
+  });
+
+  socket.on('reconnect_attempt', function (attempt) {
+    if (E.status) E.status.textContent = 'Reconnecting… (attempt ' + attempt + ')';
+  });
+
+  socket.on('reconnect_failed', function () {
+    if (E.status) E.status.textContent = 'Connection lost — pull to refresh';
+  });
+
   socket.on('connect', function () {
     // Wait for the snapshot before claiming anything about the amp.
     setLink(true);
