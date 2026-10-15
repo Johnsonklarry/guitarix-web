@@ -220,9 +220,12 @@
     }
   }
 
-  function setLink(up) {
+  function setLink(up, fault) {
     linkUp = !!up;
-    if (E.pilot) E.pilot.classList.toggle('is-on', linkUp);
+    if (E.pilot) {
+      E.pilot.classList.toggle('is-live', linkUp);
+      E.pilot.classList.toggle('is-fault', !!fault && !linkUp);
+    }
     renderStatus();
   }
 
@@ -277,7 +280,7 @@
   socket.on('snapshot', function (d) {
     d = d || {};
     haveSnapshot = true;
-    setLink(d.connected);
+    setLink(d.connected, d.connected === false);
     setPreset(d.bank, d.preset);
     setRolling(d.recording);
     setTakes(d.takes);
@@ -289,7 +292,7 @@
   });
 
   socket.on('status', function (d) {
-    setLink(d && d.connected);
+    setLink(d && d.connected, d && d.connected === false);
   });
 
   socket.on('rec', function (d) {
