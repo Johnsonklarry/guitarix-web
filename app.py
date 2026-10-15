@@ -107,18 +107,33 @@ socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 # Wrapping the decorator rather than guarding inside each one means a handler
 # added later is refused too, without anyone having to remember.
 BROADCAST_EVENTS = frozenset(("connect", "disconnect"))
+# These socket events only read state. All other registered events are treated
+# as state-changing and require an authenticated session when GX_PASSWORD is set.
+SOCKET_READ_ONLY_EVENTS = frozenset(("connect", "disconnect", "import_check",
+                                    "export_preset"))
 _socketio_on = socketio.on
 
 
 def _broadcast_guarded_on(event, *a, **kw):
     register = _socketio_on(event, *a, **kw)
-    if not BROADCAST or event in BROADCAST_EVENTS:
+    if event in BROADCAST_EVENTS:
         return register
 
     def refuse(fn):
         def blocked(*_a, **_kw):
-            log.warning("broadcast: refused %s", event)
-            return False
+            if BROADCAST:
+                log.warning("broadcast: refused %s", event)
+                return False
+            if (event not in SOCKET_READ_ONLY_EVENTS
+                    and os.environ.get("GX_PASSWORD")):
+                try:
+                    authenticated = bool(session.get("authenticated"))
+                except RuntimeError:
+                    authenticated = False
+                if not authenticated:
+                    log.warning("socket: refused unauthenticated %s", event)
+                    return False
+            return fn(*_a, **_kw)
         blocked.__name__ = getattr(fn, "__name__", "blocked")
         register(blocked)
         return fn
