@@ -73,7 +73,7 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 
-  if (!PRECACHE.includes(url.pathname) || url.search) return;
+  if (!PRECACHE.includes("/" + url.pathname.replace(/^\/+/, "")) || url.search) return;
 
   event.respondWith(
     caches.open(CACHE_NAME).then(function (cache) {
