@@ -444,7 +444,7 @@ const DEMO = (function () {
       const item = (kind === 'take' ? takes : backingItems).find(function (x) { return x.name === m.name; });
       Object.assign(R.backing, { playing: true, kind: kind, name: m.name, position: 0,
                                  duration: item ? item.duration : 60, paused: false, loop: m.loop !== false,
-                                 volume: m.volume || R.backing.volume });
+                                 volume: typeof m.volume === 'number' ? m.volume : R.backing.volume });
       pushRec(); done(m);
     },
     backing_stop: function (m) { R.backing.playing = false; pushRec(); done(m); },
