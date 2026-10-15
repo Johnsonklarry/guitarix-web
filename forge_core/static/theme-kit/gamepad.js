@@ -174,6 +174,27 @@
   var started = false, frame = null, lastTime = 0, editing = false, marked = null;
   var suppressFocusin = false, synthetic = false, styleEl = null, toastEl = null, toastTimer = null;
   var state = { held: {}, repeatAt: {} };
+  var triggerListeners = [];
+  var triggers = { lt: false, rt: false };
+
+  function updateTriggers(lt, rt) {
+    lt = !!lt;
+    rt = !!rt;
+    if (triggers.lt === lt && triggers.rt === rt) return;
+    triggers = { lt: lt, rt: rt };
+    var subscribers = triggerListeners.slice();
+    for (var i = 0; i < subscribers.length; i++) subscribers[i](lt, rt);
+  }
+
+  function onTriggers(fn) {
+    if (typeof fn !== "function") throw new TypeError("Expected a function");
+    triggerListeners.push(fn);
+    fn(triggers.lt, triggers.rt);
+    return function () {
+      var i = triggerListeners.indexOf(fn);
+      if (i !== -1) triggerListeners.splice(i, 1);
+    };
+  }
 
   function filter(list, fn) { var out = []; for (var i = 0; list && i < list.length; i++) if (fn(list[i])) out.push(list[i]); return out; }
   function hasPad() { for (var k in pads) if (pads[k]) return true; return false; }
@@ -526,10 +547,12 @@
       var dt = lastTime ? Math.min(100, Math.max(0, now - lastTime)) : 16;
       var out = stepFrame(pad, state, now, config);
       state = out.state;
+      updateTriggers(out.state.held.lt, out.state.held.rt);
       for (var i = 0; i < out.actions.length; i++) dispatch(out.actions[i]);
       if (out.scroll.x || out.scroll.y) scrollBy(out.scroll, dt);
     } else {
       state = { held: {}, repeatAt: {} };
+      updateTriggers(false, false);
     }
     lastTime = now;
     schedule();
@@ -559,13 +582,17 @@
     if (!hasPad()) {
       clearMark();
       state = { held: {}, repeatAt: {} };
+      updateTriggers(false, false);
       setRootFlag(false);
     }
     toast("Controller disconnected");
     syncPolling();
   }
 
-  function onVisibility() { syncPolling(); }
+  function onVisibility() {
+    if (doc.hidden) updateTriggers(false, false);
+    syncPolling();
+  }
   function onUserInput() { if (!synthetic) clearMark(); }
   function onKeydown(event) {
     if (/^(Tab|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Escape)$/.test(event.key)) onUserInput();
@@ -614,6 +641,7 @@
     if (toastEl) { toastEl.remove(); toastEl = null; }
     pads = {};
     state = { held: {}, repeatAt: {} };
+    updateTriggers(false, false);
     setRootFlag(false);
     return api;
   }
@@ -645,6 +673,7 @@
     start: start,
     stop: stop,
     onAction: onAction,
+    onTriggers: onTriggers,
     handleAction: handleAction,
     moveFocus: moveFocus,
     focus: focusEl,

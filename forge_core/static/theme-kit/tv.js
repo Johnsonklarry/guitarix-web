@@ -11,6 +11,49 @@
   var cursor = null;
   var positionFrame = null;
   var active = false;
+  var ltHeld = false;
+  var rtHeld = false;
+  var panicTimer = null;
+  var panicArmed = true;
+
+  function cancelPanicTimer() {
+    if (panicTimer !== null) {
+      win.clearTimeout(panicTimer);
+      panicTimer = null;
+    }
+  }
+
+  function panic() {
+    panicTimer = null;
+    if (!active || !ltHeld || !rtHeld) return;
+    panicArmed = false;
+
+    // Hosts can provide actions directly or mark their existing controls.
+    // Separate actions let a host make mute idempotent rather than toggling it.
+    if (typeof kit.tv.bypassAll === "function") {
+      kit.tv.bypassAll();
+    } else {
+      var bypass = doc.querySelector("[data-tv-panic-bypass]");
+      if (bypass) bypass.click();
+    }
+    if (typeof kit.tv.muteOutput === "function") {
+      kit.tv.muteOutput();
+    } else {
+      var mute = doc.querySelector("[data-tv-panic-mute]");
+      if (mute) mute.click();
+    }
+    doc.dispatchEvent(new win.CustomEvent("tv:panic", { bubbles: true }));
+  }
+
+  function onTriggers(lt, rt) {
+    ltHeld = !!lt;
+    rtHeld = !!rt;
+    if (!ltHeld || !rtHeld) cancelPanicTimer();
+    if (!ltHeld && !rtHeld) panicArmed = true;
+    if (active && ltHeld && rtHeld && panicArmed && panicTimer === null) {
+      panicTimer = win.setTimeout(panic, 500);
+    }
+  }
 
   function storedOn() {
     try {
@@ -84,6 +127,9 @@
 
   function enable(save) {
     active = true;
+    if (ltHeld && rtHeld && panicArmed && panicTimer === null) {
+      panicTimer = win.setTimeout(panic, 500);
+    }
     doc.documentElement.setAttribute("data-tv", "on");
     syncCursor();
     if (save) persist(true);
@@ -92,6 +138,7 @@
 
   function disable(save) {
     active = false;
+    cancelPanicTimer();
     doc.documentElement.removeAttribute("data-tv");
     removeCursor();
     if (save) persist(false);
@@ -144,6 +191,7 @@
     off: function () { return disable(true); },
     toggle: function () { return active ? disable(true) : enable(true); }
   };
+  nav.onTriggers(onTriggers);
 
   var queryOn = false;
   try {
