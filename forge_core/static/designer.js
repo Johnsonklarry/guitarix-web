@@ -28,12 +28,27 @@
     box.hidden = false;
   }
   async function request(path, method = 'GET', body) {
-    const response = await fetch(new URL(path, api), {
-      method,
-      headers: body === undefined ? {} : {'Content-Type': 'application/json'},
-      body: body === undefined ? undefined : JSON.stringify(body),
-      cache: 'no-store'
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    let response;
+    try {
+      response = await fetch(new URL(path, api), {
+        method,
+        headers: body === undefined ? {} : {'Content-Type': 'application/json'},
+        body: body === undefined ? undefined : JSON.stringify(body),
+        cache: 'no-store',
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error && error.name === 'AbortError') {
+        const problem = new Error('request timed out');
+        problem.messages = ['request timed out'];
+        throw problem;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
     const data = response.status === 204 ? null : await response.json();
     if (!response.ok) {
       const problem = new Error((data && data.errors && data.errors.join('; ')) || (data && data.error) || `Request failed (${response.status})`);
