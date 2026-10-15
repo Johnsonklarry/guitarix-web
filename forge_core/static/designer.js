@@ -55,6 +55,12 @@
     } finally {
       clearTimeout(timeout);
     }
+    if (response.status === 401 || response.status === 403) {
+      const problem = new Error('Session expired - please sign in again.');
+      problem.auth = true;
+      problem.messages = [problem.message];
+      throw problem;
+    }
     const data = response.status === 204 ? null : await response.json();
     if (!response.ok) {
       const problem = new Error((data && data.errors && data.errors.join('; ')) || (data && data.error) || `Request failed (${response.status})`);
@@ -400,7 +406,10 @@
   }
   async function action(callback) {
     try { await callback(); }
-    catch (error) { errors(error.messages || [error.message]); announce('Request failed.'); }
+    catch (error) {
+      errors(error.messages || [error.message]);
+      announce(error.auth ? error.message : 'Request failed.');
+    }
   }
   async function init() {
     registry = await request('registry');
