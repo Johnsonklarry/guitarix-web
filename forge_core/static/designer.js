@@ -290,8 +290,13 @@
   }
   function cellAt(clientX, clientY) {
     const rect = grid.getBoundingClientRect();
+    const cellWidth = rect.width / preset.columns;
+    if (!(rect.width > 0) || !Number.isFinite(cellWidth) || cellWidth <= 0) return null;
     if (clientX < rect.left || clientX >= rect.right || clientY < rect.top || clientY >= rect.bottom) return null;
-    return {x: Math.floor((clientX - rect.left) / (rect.width / preset.columns)), y: Math.floor((clientY - rect.top) / preset.row_height)};
+    const x = Math.floor((clientX - rect.left) / cellWidth);
+    const y = Math.floor((clientY - rect.top) / preset.row_height);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return {x, y};
   }
   function dropCell(cell, item) {
     // Snap a drop near the right edge inside the grid instead of refusing it.
