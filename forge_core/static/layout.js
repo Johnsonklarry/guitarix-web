@@ -7,7 +7,11 @@ window.ForgeLayout = {
       const source = (tile && (tile.usage_payload || tile.data))
         || (options && (options.usage_payload || options.data));
       if (!source || source.status === 'unavailable') {
-        window.ForgeLayout.renderUnavailable(bodyEl, 'Storage unavailable');
+        window.ForgeLayout.renderUnavailable(
+          bodyEl,
+          'Storage unavailable',
+          window.ForgeLayout.retryHandler(options, tile)
+        );
         return null;
       }
       const usage = source.usage || {};
@@ -29,7 +33,11 @@ window.ForgeLayout = {
       const source = (tile && (tile.books_payload || tile.data))
         || (options && (options.books_payload || options.data));
       if (!source || source.status === 'unavailable') {
-        window.ForgeLayout.renderUnavailable(bodyEl, 'Unavailable');
+        window.ForgeLayout.renderUnavailable(
+          bodyEl,
+          'Unavailable',
+          window.ForgeLayout.retryHandler(options, tile)
+        );
         return null;
       }
       const list = document.createElement('ul');
@@ -50,11 +58,19 @@ window.ForgeLayout = {
 
       const renderSource = (data) => {
         if (!data || data.authorized === false || data.status === 'unconfigured') {
-          window.ForgeLayout.renderUnavailable(bodyEl, 'Unconfigured');
+          window.ForgeLayout.renderUnavailable(
+            bodyEl,
+            'Unconfigured',
+            window.ForgeLayout.retryHandler(options, tile)
+          );
           return;
         }
         if (data.status === 'unavailable') {
-          window.ForgeLayout.renderUnavailable(bodyEl, 'Offline');
+          window.ForgeLayout.renderUnavailable(
+            bodyEl,
+            'Offline',
+            window.ForgeLayout.retryHandler(options, tile)
+          );
           return;
         }
         const wrapper = document.createElement('div');
@@ -207,7 +223,11 @@ window.ForgeLayout = {
       const source = (tile && (tile.flows_payload || tile.data))
         || (options && (options.flows_payload || options.data));
       if (!source || source.status === 'unavailable') {
-        window.ForgeLayout.renderUnavailable(bodyEl, 'Unavailable');
+        window.ForgeLayout.renderUnavailable(
+          bodyEl,
+          'Unavailable',
+          window.ForgeLayout.retryHandler(options, tile)
+        );
         return null;
       }
       const list = document.createElement('ul');
@@ -227,7 +247,11 @@ window.ForgeLayout = {
       const source = (tile && (tile.log_payload || tile.data))
         || (options && (options.log_payload || options.data));
       if (!source || source.status === 'unavailable') {
-        window.ForgeLayout.renderUnavailable(bodyEl, 'Unavailable');
+        window.ForgeLayout.renderUnavailable(
+          bodyEl,
+          'Unavailable',
+          window.ForgeLayout.retryHandler(options, tile)
+        );
         return null;
       }
       const list = document.createElement('ul');
@@ -279,19 +303,34 @@ window.ForgeLayout = {
       bodyEl.className = 'forge-tile-body';
       tileEl.appendChild(bodyEl);
 
+      const userRetry = (tile.options && typeof tile.options.on_retry === 'function')
+        ? tile.options.on_retry
+        : null;
+      const retry = () => {
+        if (userRetry) {
+          try {
+            userRetry();
+          } catch (err) {
+            // Keep the tile refreshable even if a caller-supplied retry throws.
+          }
+        }
+        bodyEl.innerHTML = '';
+        renderTile();
+      };
       const renderTile = () => {
         let activeCleanup = null;
+        const renderOptions = Object.assign({}, tile.options, { on_retry: retry });
         try {
           const renderer = renderers[tile.type]
             || (window.ForgeLayout.renderers || {})[tile.type];
           if (renderer) {
-            activeCleanup = renderer(bodyEl, tile.options, tile);
+            activeCleanup = renderer(bodyEl, renderOptions, tile);
             if (activeCleanup) cleanups.push(activeCleanup);
           } else {
-            this.renderUnavailable(bodyEl, 'Unknown tile type');
+            this.renderUnavailable(bodyEl, 'Unknown tile type', retry);
           }
         } catch (err) {
-          this.renderUnavailable(bodyEl, 'Tile unavailable');
+          this.renderUnavailable(bodyEl, 'Tile unavailable', retry);
         }
         return activeCleanup;
       };
@@ -343,11 +382,34 @@ window.ForgeLayout = {
     };
   },
 
-  renderUnavailable(container, message) {
+  retryHandler(options, tile) {
+    if (options && typeof options.on_retry === 'function') {
+      return options.on_retry;
+    }
+    if (tile && typeof tile.on_retry === 'function') {
+      return tile.on_retry;
+    }
+    if (tile && tile.options && typeof tile.options.on_retry === 'function') {
+      return tile.options.on_retry;
+    }
+    return undefined;
+  },
+
+  renderUnavailable(container, message, onRetry) {
     container.innerHTML = '';
     const unavailableEl = document.createElement('div');
     unavailableEl.className = 'forge-tile-unavailable forge-tile-placeholder';
     unavailableEl.textContent = message || 'Tile unavailable';
+    if (typeof onRetry === 'function') {
+      const retryButton = document.createElement('button');
+      retryButton.type = 'button';
+      retryButton.className = 'forge-tile-retry';
+      retryButton.textContent = 'Retry';
+      retryButton.addEventListener('click', function handleRetryClick() {
+        onRetry();
+      });
+      unavailableEl.appendChild(retryButton);
+    }
     container.appendChild(unavailableEl);
   },
 
