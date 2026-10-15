@@ -32,13 +32,38 @@
     };
   }
 
-  function apply() {
+  function apply(persist) {
     root.setAttribute("data-comfort", state.level);
     root.setAttribute("data-comfort-contrast", state.contrast ? "on" : "off");
     root.setAttribute("data-comfort-motion", state.motion ? "on" : "off");
-    save();
+    if (persist !== false) save();
     document.dispatchEvent(new CustomEvent("themekit:comfort", { detail: get() }));
   }
+
+  function onStorage(event) {
+    if (!event || event.key !== storageKey) return;
+
+    var value;
+    try {
+      value = JSON.parse(event.newValue);
+    } catch (error) {
+      return;
+    }
+
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+        levels.indexOf(value.level) === -1 ||
+        typeof value.contrast !== "boolean" ||
+        typeof value.motion !== "boolean") {
+      return;
+    }
+
+    state.level = value.level;
+    state.contrast = value.contrast;
+    state.motion = value.motion;
+    apply(false);
+  }
+
+  window.addEventListener("storage", onStorage);
 
   function set(level) {
     if (levels.indexOf(level) === -1) {
