@@ -32,9 +32,15 @@
     const timeout = setTimeout(() => controller.abort(), 10000);
     let response;
     try {
+      const headers = body === undefined ? {} : {'Content-Type': 'application/json'};
+      if (method !== 'GET') {
+        const token = document.querySelector('meta[name="csrf-token"]')?.content ||
+          document.cookie.match(/(?:^|;\s*)(?:csrf_token|csrftoken)=([^;]*)/)?.[1];
+        if (token) headers['X-CSRF-Token'] = token;
+      }
       response = await fetch(new URL(path, api), {
         method,
-        headers: body === undefined ? {} : {'Content-Type': 'application/json'},
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: 'no-store',
         signal: controller.signal
