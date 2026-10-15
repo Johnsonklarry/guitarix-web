@@ -207,6 +207,14 @@ body {
   box-shadow: 0 0 9px var(--lamp-glow);
 }
 
+/* broadcast.js toggles 'on' on the #stream element itself while the visitor is
+   listening, so the lit state has to follow the audio element, not a lamp
+   class on the container. */
+.listen:has(#stream.on) {
+  border-color: var(--lamp);
+  color: var(--cream);
+}
+
 /* ---------------------------------------------------------------- footer */
 
 .chassis {
