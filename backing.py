@@ -26,6 +26,41 @@ from reamp import OUTPUT_CLIENT, FALLBACK_OUTPUTS
 BACKING_DIR = os.path.expanduser("~/backing")
 EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".opus")
 SAFE = re.compile(r"[^A-Za-z0-9 _.\-()&']")
+# How many leading bytes save_upload() needs to recognise a container. The
+# longest signature it checks (a RIFF/WAVE header) reads through byte 12.
+MAGIC_BYTES = 16
+
+
+def looks_like_audio(head):
+    """
+    True when `head`, a file's leading bytes, matches a known audio container.
+
+    The check is deliberately permissive about the *codec* and strict about
+    the *container*: a file has to at least start like RIFF/WAVE, FLAC, Ogg,
+    an MPEG audio stream (with or without an ID3 tag), or an ISO base media
+    / M4A ``ftyp`` box. That is enough to stop a renamed text file, an image
+    or an archive from being stored as a track, without rejecting anything a
+    browser might legitimately upload.
+    """
+    if not isinstance(head, (bytes, bytearray)) or len(head) < 4:
+        return False
+    if head[:4] == b"RIFF":
+        # WAVE is the only RIFF form we play; the form type lives at byte 8.
+        return len(head) >= 12 and head[8:12] == b"WAVE"
+    if head[:4] == b"fLaC":
+        return True
+    if head[:4] == b"OggS":
+        return True
+    if head[:3] == b"ID3":
+        return True
+    if head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+        # MPEG audio frame sync: eleven set bits. Also matches ADTS AAC, and
+        # may follow an ID3 tag.
+        return True
+    if head[4:8] == b"ftyp":
+        # ISO base media / M4A: a 4-byte box size, then "ftyp".
+        return True
+    return False
 
 
 class BackingError(Exception):
@@ -73,12 +108,21 @@ class Backing:
         name = safe_filename(filename)
         if not name.lower().endswith(EXTENSIONS):
             raise BackingError("That isn't an audio file this can play (%s)." % ", ".join(EXTENSIONS))
+        # Look at the leading bytes before anything is written: a text file
+        # renamed to .wav still ends in .wav, so the extension alone proves
+        # nothing. Checking here means a bad upload never becomes a track.
+        head = stream.read(MAGIC_BYTES)
+        if not looks_like_audio(head):
+            raise BackingError(
+                "%s doesn't look like audio -- its contents aren't a supported "
+                "format (%s)." % (name, ", ".join(EXTENSIONS)))
         stem, ext = os.path.splitext(name)
         path, n = os.path.join(self.dir, name), 2
         while os.path.exists(path):
             path = os.path.join(self.dir, "%s (%d)%s" % (stem, n, ext))
             n += 1
         with open(path, "wb") as f:
+            f.write(head)              # re-emit the bytes we peeked at
             shutil.copyfileobj(stream, f, 1024 * 1024)
         self.on_change()
         return os.path.basename(path)

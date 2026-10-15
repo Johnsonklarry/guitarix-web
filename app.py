@@ -903,17 +903,23 @@ def backing_upload():
     if not files:
         return jsonify({"ok": False, "error": "No file came through."}), 400
     saved = []
-    try:
-        for f in files:
-            safe = _confined(backing.dir, f.filename, must_exist=False)
-            if safe is None:
-                return jsonify({"ok": False, "error": "That file name leaves the backing folder.",
-                                "saved": saved}), 400
-            # hand the library the name that was checked, not the raw one from
-            # the client, so the guard and the write can't drift apart
+    for f in files:
+        safe = _confined(backing.dir, f.filename, must_exist=False)
+        if safe is None:
+            return jsonify({"ok": False, "error": "That file name leaves the backing folder.",
+                            "saved": saved}), 400
+        # hand the library the name that was checked, not the raw one from
+        # the client, so the guard and the write can't drift apart
+        try:
             saved.append(backing.save_upload(os.path.basename(safe), f.stream))
-    except (BackingError, OSError) as exc:
-        return jsonify({"ok": False, "error": str(exc), "saved": saved}), 400
+        except BackingError as exc:
+            # The library refuses anything whose magic bytes aren't a known
+            # audio container; name the offending file so the browser can say
+            # which one was bad. 400, not 500: the upload was wrong, we're fine.
+            return jsonify({"ok": False, "error": str(exc),
+                            "file": os.path.basename(safe), "saved": saved}), 400
+        except OSError as exc:
+            return jsonify({"ok": False, "error": str(exc), "saved": saved}), 400
     return jsonify({"ok": True, "saved": saved})
 
 
