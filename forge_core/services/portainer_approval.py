@@ -61,5 +61,5 @@ def create_redeploy_request(stack, endpoint, revision, requester, expires_at, *,
         endpoint=endpoint,
         revision=revision,
         requester=requester,
-        expires_at=expires_at,
+        expires_at=_as_utc(expires_at),
     )
