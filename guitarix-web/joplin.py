@@ -238,6 +238,12 @@ def render_view(view: JoplinView) -> str:
     The fragment is plain escaped markup: it carries no note-edit controls
     and no playback controls, and an unavailable view still renders an
     ordinary section so the caller's page keeps working.
+
+    When *view* is unavailable the fragment also carries a Retry control
+    (the ``data-joplin-action="retry"`` hook) that the caller can wire to
+    :meth:`JoplinAdapter.invalidate` followed by :meth:`JoplinAdapter.load`
+    with ``force=True``.  The available rendering is left untouched and
+    never contains that control.
     """
     if not view.available:
         notice = f'<p class="joplin-notice">{_escape(UNAVAILABLE_NOTICE)}</p>'
@@ -246,9 +252,16 @@ def render_view(view: JoplinView) -> str:
             if view.reason
             else ""
         )
+        # Expose a retry hook as a data attribute rather than an interactive
+        # form control, so the read-only guarantee (no edit/playback controls)
+        # continues to hold on this path as well as the available one.
+        retry = (
+            '<p class="joplin-retry" data-joplin-action="retry"'
+            ' data-joplin-force="true">Retry</p>'
+        )
         return (
             '<section class="joplin joplin-unavailable" data-joplin="unavailable">'
-            f"{notice}{reason}</section>"
+            f"{notice}{reason}{retry}</section>"
         )
     parts = ['<section class="joplin" data-joplin="available">']
     for book in view.notebooks:
