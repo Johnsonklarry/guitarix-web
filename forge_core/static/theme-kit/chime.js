@@ -99,19 +99,38 @@
     oscillator.stop(end);
   }
 
+  function schedulePreset(ctx, preset) {
+    var now = typeof ctx.currentTime === "number" ? ctx.currentTime : 0;
+    for (var i = 0; i < preset.length; i++) {
+      playStep(ctx, preset[i], now);
+    }
+  }
+
   function play(name) {
     var preset = presets[name];
     if (!preset) throw new RangeError("Unknown chime: " + name);
     if (isMuted()) return false;
     var ctx = sharedContext();
     if (!ctx) return false;
-    if (ctx.state === "suspended" && typeof ctx.resume === "function") {
-      ctx.resume();
+
+    if (ctx.state !== "running") {
+      if (typeof ctx.resume !== "function") return false;
+      var resumeResult;
+      try {
+        resumeResult = ctx.resume();
+      } catch (error) {
+        return false;
+      }
+      return Promise.resolve(resumeResult).then(function () {
+        if (ctx.state !== "running") return false;
+        schedulePreset(ctx, preset);
+        return true;
+      }, function () {
+        return false;
+      });
     }
-    var now = typeof ctx.currentTime === "number" ? ctx.currentTime : 0;
-    for (var i = 0; i < preset.length; i++) {
-      playStep(ctx, preset[i], now);
-    }
+
+    schedulePreset(ctx, preset);
     return true;
   }
 
