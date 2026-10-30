@@ -32,7 +32,7 @@ if __name__ == "__main__" and "--check" in sys.argv:
     sys.exit(diagnose.main(sys.argv[1:]))
 
 from flask import (Flask, Response, abort, jsonify, render_template, request,
-                   send_from_directory, session, url_for)
+                   send_file, send_from_directory, session, url_for)
 from flask_socketio import SocketIO
 
 import controls
@@ -81,6 +81,23 @@ REC_FEED_STALE = 5.0      # seconds
 # generic binary download.
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
+STYLE_VENDOR_ROOT = os.path.realpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "forge_core", "static", "style"
+))
+
+
+def vendor_style_path(filename):
+    if not filename or "\\" in filename:
+        return None
+    parts = filename.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    path = os.path.realpath(os.path.join(STYLE_VENDOR_ROOT, *parts))
+    if os.path.commonpath((STYLE_VENDOR_ROOT, path)) != STYLE_VENDOR_ROOT:
+        return None
+    return path
+
+
 app = Flask(__name__)
 # Signs Socket.IO's session cookie. Nothing needs to survive a restart, so a
 # fresh random key each start is fine; set GX_SECRET_KEY to pin one.
@@ -97,12 +114,26 @@ def asset(filename):
     keep running an old app.js after a deploy; a new stamp is a new URL, so
     they can't.
     """
-    path = os.path.join(app.static_folder, filename)
+    if filename.startswith("style/"):
+        path = vendor_style_path(filename[len("style/"):])
+    else:
+        path = os.path.join(app.static_folder, filename)
     try:
         stamp = int(os.path.getmtime(path))
-    except OSError:
+    except (OSError, TypeError):
         stamp = 0
     return url_for("static", filename=filename, v=stamp)
+
+
+@app.route("/static/style/<path:filename>")
+def vendor_style(filename):
+    path = vendor_style_path(filename)
+    if path is None or not os.path.isfile(path):
+        abort(404)
+    mimetype = "text/css" if filename.lower().endswith(".css") else None
+    return send_file(path, mimetype=mimetype)
+
+
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
 # Broadcast mode refuses control events by never registering their handlers.
